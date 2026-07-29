@@ -13,5 +13,5 @@ public record Bytes(byte[] Data)
         return hash.ToHashCode();
     }
     
-    public  override string ToString() => $"[{string.Join(",", Data)}]";
+    public override string ToString() => $"[{string.Join(",", Data)}]";
 }
