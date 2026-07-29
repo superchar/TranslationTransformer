@@ -21,6 +21,8 @@ public class TransformerInferenceModel : IInferenceModel
 
     public IEnumerable<string> PerformInference(string sourceText, string targetText)
     {
+        using var gradScope = torch.no_grad();
+        _encoderDecoderTransformer.eval();
         if (string.IsNullOrWhiteSpace(targetText))
         {
             targetText = ITokenizer.SpecialTokens.StartOfTheSequence;
@@ -33,6 +35,7 @@ public class TransformerInferenceModel : IInferenceModel
 
         foreach (var _ in Enumerable.Range(0, 10))
         {
+            using var scope = torch.NewDisposeScope();
             var targetTextTokensTensor = torch.tensor(targetTextTokens)
                 .unsqueeze(0)
                 .to(DeviceManager.GetDevice());
