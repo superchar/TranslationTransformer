@@ -10,6 +10,17 @@
     <ItemGroup>
       <ProjectReference Include="..\TranslatorTransformer.Core\TranslatorTransformer.Core.csproj" />
     </ItemGroup>
+
+    <ItemGroup>
+      <None Remove="Translations\EN.txt" />
+      <Content Include="Translations\EN.txt">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+      <None Remove="Translations\RU.txt" />
+      <Content Include="Translations\RU.txt">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+    </ItemGroup>
     
 
 </Project>

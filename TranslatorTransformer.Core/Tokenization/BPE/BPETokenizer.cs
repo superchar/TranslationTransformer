@@ -10,8 +10,9 @@ public partial class BPETokenizer : ITokenizer
     private Dictionary<Bytes, int>? _bytesToTokenMappingTable;
     private Dictionary<int, Bytes> _tokenToBytesMappingTable;
 
-    public void Train(IEnumerable<string> documents, int vocabSize)
+    public void Train(string content, int vocabSize)
     {
+        Console.WriteLine($"Training a tokenizer to be {vocabSize} words.");
         _bytesToTokenMappingTable = new Dictionary<Bytes, int>();
 
         foreach (var basicByte in Enumerable.Range(byte.MinValue, byte.MaxValue + 1))
@@ -22,7 +23,8 @@ public partial class BPETokenizer : ITokenizer
 
         foreach (var specialToken in ITokenizer.SpecialTokens.All)
         {
-            _bytesToTokenMappingTable[new Bytes(Encoding.UTF8.GetBytes(specialToken))] = _bytesToTokenMappingTable.Count;
+            _bytesToTokenMappingTable[new Bytes(Encoding.UTF8.GetBytes(specialToken))] =
+                _bytesToTokenMappingTable.Count;
         }
 
         if (vocabSize <= byte.MaxValue)
@@ -30,32 +32,29 @@ public partial class BPETokenizer : ITokenizer
             return;
         }
 
-        foreach (var document in documents)
+        var words = GetWords(content)
+            .GroupBy(w => w)
+            .Select(g => (Word: GetWordBytes(g.Key), Count: g.Count()))
+            .ToList();
+
+        while (true)
         {
-            if (_bytesToTokenMappingTable.Count == vocabSize)
+            var mergingByCountTable = GetPairFrequency(words);
+
+            if (mergingByCountTable.Count == 0 || _bytesToTokenMappingTable.Count == vocabSize)
             {
                 break;
             }
 
-            var words = GetWords(document);
+            var mostFrequentPair = mergingByCountTable.MaxBy(pair => pair.Value);
+            var firstMostFrequentByte = mostFrequentPair.Key.Item1;
+            var secondMostFrequentByte = mostFrequentPair.Key.Item2;
+            var mergedPair = firstMostFrequentByte.Merge(secondMostFrequentByte);
+            _bytesToTokenMappingTable[mergedPair] = _bytesToTokenMappingTable.Count;
 
-            while (true)
-            {
-                var mergingByCountTable = GetPairFrequency(words);
+            MergeBytes(words, firstMostFrequentByte, secondMostFrequentByte);
 
-                if (mergingByCountTable.Count == 0 || _bytesToTokenMappingTable.Count == vocabSize)
-                {
-                    break;
-                }
-
-                var mostFrequentPair = mergingByCountTable.MaxBy(pair => pair.Value);
-                var firstMostFrequentByte = mostFrequentPair.Key.Item1;
-                var secondMostFrequentByte = mostFrequentPair.Key.Item2;
-                var mergedPair = firstMostFrequentByte.Merge(secondMostFrequentByte);
-                _bytesToTokenMappingTable[mergedPair] = _bytesToTokenMappingTable.Count;
-                
-                MergeBytes(words, firstMostFrequentByte, secondMostFrequentByte);
-            }
+            Console.WriteLine($"{_bytesToTokenMappingTable.Count} tokens created.");
         }
 
         _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
@@ -65,12 +64,12 @@ public partial class BPETokenizer : ITokenizer
     {
         ThrowIfNotTrained();
 
-        var words = GetWords(content);
+        var words = GetWordsBytes(content);
 
         while (true)
         {
             var leastFrequentPairMappingTable = GetPairFrequency(words);
-          
+
             if (leastFrequentPairMappingTable.Count == 0)
             {
                 break;
@@ -86,7 +85,7 @@ public partial class BPETokenizer : ITokenizer
                 {
                     continue;
                 }
-                
+
                 minRank = rank;
                 firstLeastFrequentByte = pair.Key.Item1;
                 secondLeastFrequentByte = pair.Key.Item2;
@@ -98,7 +97,6 @@ public partial class BPETokenizer : ITokenizer
             }
 
             MergeBytes(words, firstLeastFrequentByte, secondLeastFrequentByte);
-            
         }
 
         return words.SelectMany(word => word
@@ -110,21 +108,29 @@ public partial class BPETokenizer : ITokenizer
         => Encoding.UTF8.GetString(encoded
             .SelectMany(token => _tokenToBytesMappingTable[token].Data)
             .ToArray());
-    
+
 
     [GeneratedRegex("'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+\n",
         RegexOptions.Compiled)]
     private static partial Regex WordSplittingRegex();
 
-    private static List<List<Bytes>> GetWords(string content)
+    private static List<List<Bytes>> GetWordsBytes(string content)
+        => GetWords(content)
+            .Select(GetWordBytes)
+            .ToList();
+
+    private static List<Bytes> GetWordBytes(string word)
+        => Encoding.UTF8.GetBytes(word)
+            .Select(b => new Bytes([b]))
+            .ToList();
+
+    private static List<string> GetWords(string content)
     {
         var wordSplittingRegex = WordSplittingRegex();
 
         return wordSplittingRegex
             .Matches(content)
-            .Select(word => Encoding.UTF8.GetBytes(word.Value)
-                .Select(b => new Bytes([b]))
-                .ToList())
+            .Select(m => m.Value)
             .ToList();
     }
 
@@ -147,10 +153,29 @@ public partial class BPETokenizer : ITokenizer
         }
     }
 
-    private static Dictionary<(Bytes, Bytes), int> GetPairFrequency(List<List<Bytes>>  words)
+    private static void MergeBytes(List<(List<Bytes> Word, int Count)> words, Bytes first, Bytes second)
+    {
+        foreach (var word in words)
+        {
+            for (var i = 0; i < word.Word.Count - 1; i++)
+            {
+                if (!word.Word[i].Equals(first) ||
+                    !word.Word[i + 1].Equals(second))
+                {
+                    continue;
+                }
+
+                word.Word[i] = first.Merge(second);
+                word.Word.RemoveAt(i + 1);
+                i--;
+            }
+        }
+    }
+
+    private static Dictionary<(Bytes, Bytes), int> GetPairFrequency(List<List<Bytes>> words)
     {
         var frequencyTable = new Dictionary<(Bytes, Bytes), int>();
-        
+
         foreach (var word in words.SelectMany(word => word.Zip(word.Skip(1))))
         {
             frequencyTable[word] = frequencyTable.GetValueOrDefault(word, 0) + 1;
@@ -158,7 +183,24 @@ public partial class BPETokenizer : ITokenizer
 
         return frequencyTable;
     }
-    
+
+    private static Dictionary<(Bytes, Bytes), int> GetPairFrequency(List<(List<Bytes> Word, int Count)> words)
+    {
+        var frequencyTable = new Dictionary<(Bytes, Bytes), int>();
+
+        foreach (var (word, count) in words)
+        {
+            for (var i = 0; i < word.Count - 1; i++)
+            {
+                var pair = (word[i], word[i + 1]);
+                frequencyTable[pair] = frequencyTable.GetValueOrDefault(pair, 0) + count;
+            }
+        }
+
+        return frequencyTable;
+    }
+
+
     private void ThrowIfNotTrained()
     {
         if (_bytesToTokenMappingTable is null)
