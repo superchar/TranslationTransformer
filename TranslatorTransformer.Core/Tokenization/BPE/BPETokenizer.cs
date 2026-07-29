@@ -58,7 +58,7 @@ public partial class BPETokenizer : ITokenizer
         _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
     }
 
-    public int[] Encode(string content)
+    public List<int> Encode(string content)
     {
         ThrowIfNotTrained();
 
@@ -100,7 +100,7 @@ public partial class BPETokenizer : ITokenizer
 
         return words.SelectMany(word => word
                 .Select(wordByte => _bytesToTokenMappingTable[wordByte]))
-            .ToArray();
+            .ToList();
     }
 
     public string Decode(int[] encoded)

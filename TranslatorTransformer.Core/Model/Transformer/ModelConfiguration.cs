@@ -10,5 +10,8 @@ public static class ModelConfiguration
 
     public const int MLPScalingFactor = 4;
 
+    public const int MaxContextSize = 1024;
+    
     public static int HeadSize => HiddenSize / NumHeads;
+    
 }

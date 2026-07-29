@@ -1,24 +1,118 @@
 ﻿using TorchSharp;
 using TorchSharp.Modules;
+using TranslatorTransformer.Core.Tokenization;
 
 namespace TranslatorTransformer.Core.Model.Transformer;
 
 public class TransformerInferenceModel : IInferenceModel
 {
+    private readonly ITokenizer _tokenizer;
+    private readonly EncoderDecoderTransformer _encoderDecoderTransformer = new();
+
+    public TransformerInferenceModel(ITokenizer tokenizer)
+    {
+        _tokenizer = tokenizer;
+        _encoderDecoderTransformer.to(DeviceManager.GetDevice());
+    }
+
     public void Train(IEnumerable<string> documents)
     {
     }
 
-    public IEnumerable<string> PerformInference(string prompt)
+    public IEnumerable<string> PerformInference(string sourceText, string targetText)
     {
-        return [];
+        if (string.IsNullOrWhiteSpace(targetText))
+        {
+            targetText = ITokenizer.SpecialTokens.StartOfTheSequence;
+        }
+
+        var sourceTextTokensTensor = torch.tensor(_tokenizer.Encode(sourceText))
+            .unsqueeze(0)
+            .to(DeviceManager.GetDevice());
+        var targetTextTokens = _tokenizer.Encode(targetText);
+
+        foreach (var _ in Enumerable.Range(0, 10))
+        {
+            var targetTextTokensTensor = torch.tensor(targetTextTokens)
+                .unsqueeze(0)
+                .to(DeviceManager.GetDevice());
+            var modelOutput = _encoderDecoderTransformer.forward(sourceTextTokensTensor, targetTextTokensTensor);
+            var logits = modelOutput[0, -1];
+            var probs = logits.softmax(-1);
+            var nextToken = (int)torch.multinomial(probs, 1).item<long>();
+            yield return _tokenizer.Decode([nextToken]);
+            targetTextTokens.Add(nextToken);
+        }
     }
+}
+
+internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor>
+{
+    private readonly Linear _linear = torch.nn.Linear(ModelConfiguration.HiddenSize, ITokenizer.VocabSize);
+
+    private readonly TransformerEncoder _encoder = new();
+    private readonly Embedding _encoderPositionalEmbedding =
+        torch.nn.Embedding(ModelConfiguration.MaxContextSize, ModelConfiguration.HiddenSize);
+    private readonly Embedding _encoderTokenEmbedding =
+        torch.nn.Embedding(ITokenizer.VocabSize, ModelConfiguration.HiddenSize);
+    
+    private readonly TransformerDecoder _decoder = new();
+    private readonly Embedding _decoderPositionalEmbedding =
+        torch.nn.Embedding(ModelConfiguration.MaxContextSize, ModelConfiguration.HiddenSize);
+    private readonly Embedding _decoderTokenEmbedding =
+        torch.nn.Embedding(ITokenizer.VocabSize, ModelConfiguration.HiddenSize);
+
+    public EncoderDecoderTransformer() : base("Encoder decoder transformer")
+    {
+        RegisterComponents();
+    }
+
+    public override torch.Tensor forward(torch.Tensor encoderInput, torch.Tensor decoderInput)
+    {
+        var encoderPositions = torch.arange(
+            encoderInput.shape[1],
+            device: encoderInput.device,
+            dtype: torch.ScalarType.Int64
+        ).unsqueeze(0);
+        var encoderEmbedding = _encoderPositionalEmbedding.forward(encoderPositions) +
+                               _encoderTokenEmbedding.forward(encoderInput);
+        var encoderOutput = _encoder.forward(encoderEmbedding);
+        
+        var decoderPositions = torch.arange(
+            decoderInput.shape[1],
+            device: decoderInput.device,
+            dtype: torch.ScalarType.Int64
+        ).unsqueeze(0);
+
+        var decoderEmbedding = _decoderPositionalEmbedding.forward(decoderPositions) +
+                               _decoderTokenEmbedding.forward(decoderInput);
+
+        var decoderOutput = _decoder.forward(decoderEmbedding, encoderOutput);
+
+        return _linear.forward(decoderOutput);
+    }
+}
+
+internal class TransformerDecoder : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor>
+{
+    private readonly ModuleList<Block> _blocks;
+
+    public TransformerDecoder() : base("Transformer decoder")
+    {
+        _blocks = torch.nn.ModuleList(Enumerable.Range(0, ModelConfiguration.NumBlocks)
+            .Select(_ => new Block())
+            .ToArray());
+        RegisterComponents();
+    }
+
+    public override torch.Tensor forward(torch.Tensor input, torch.Tensor encoderOutput)
+        => _blocks.Aggregate(input, (current, block) => block.forward(current, encoderOutput, true));
 }
 
 internal class TransformerEncoder : torch.nn.Module<torch.Tensor, torch.Tensor>
 {
     private readonly ModuleList<Block> _blocks;
-    
+
     public TransformerEncoder() : base("Transformer encoder")
     {
         _blocks = torch.nn.ModuleList(Enumerable.Range(0, ModelConfiguration.NumBlocks)
@@ -33,35 +127,34 @@ internal class TransformerEncoder : torch.nn.Module<torch.Tensor, torch.Tensor>
         {
             input = block.forward(input, null, false);
         }
-        
+
         return input;
     }
 }
 
 internal class Block : torch.nn.Module<torch.Tensor, torch.Tensor, bool, torch.Tensor>
 {
-    
     private readonly MLP _mlp;
     private readonly LayerNorm _mlpLayerNorm;
-    
+
     private readonly LayerNorm _multiHeadSelfAttentionLayerNorm;
     private readonly MultiHeadedAttention _multiHeadSelfAttention;
-    
+
     private readonly LayerNorm _multiHeadCrossAttentionLayerNorm;
     private readonly MultiHeadedAttention _multiHeadCrossAttention;
-    
-    
+
+
     public Block() : base("Block")
     {
         _mlp = new MLP();
         _mlpLayerNorm = torch.nn.LayerNorm(ModelConfiguration.HiddenSize);
-        
+
         _multiHeadSelfAttention = new MultiHeadedAttention();
         _multiHeadSelfAttentionLayerNorm = torch.nn.LayerNorm(ModelConfiguration.HiddenSize);
 
         _multiHeadCrossAttention = new MultiHeadedAttention();
         _multiHeadCrossAttentionLayerNorm = torch.nn.LayerNorm(ModelConfiguration.HiddenSize);
-        
+
         RegisterComponents();
     }
 
@@ -73,13 +166,11 @@ internal class Block : torch.nn.Module<torch.Tensor, torch.Tensor, bool, torch.T
         if (src is not null)
         {
             tgt = _multiHeadCrossAttentionLayerNorm.forward(tgt +
-                                                            _multiHeadCrossAttention.forward(tgt, src, src, isMasked));
+                                                            _multiHeadCrossAttention.forward(tgt, src, src, false));
         }
 
         return _mlpLayerNorm.forward(tgt + _mlp.forward(tgt));
-
     }
-    
 }
 
 internal class MLP : torch.nn.Module<torch.Tensor, torch.Tensor>
@@ -94,7 +185,7 @@ internal class MLP : torch.nn.Module<torch.Tensor, torch.Tensor>
             torch.nn.ReLU(),
             torch.nn.Linear(scalingFactor, ModelConfiguration.HiddenSize)
         ]);
-        
+
         RegisterComponents();
     }
 
@@ -111,7 +202,7 @@ internal class MultiHeadedAttention : torch.nn.Module<torch.Tensor, torch.Tensor
     {
         _projection = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HiddenSize);
 
-        _heads = torch.nn.ModuleList(Enumerable.Range(0, ModelConfiguration.HeadSize)
+        _heads = torch.nn.ModuleList(Enumerable.Range(0, ModelConfiguration.NumHeads)
             .Select(n => new AttentionHead(n))
             .ToArray());
 
@@ -121,11 +212,11 @@ internal class MultiHeadedAttention : torch.nn.Module<torch.Tensor, torch.Tensor
     public override torch.Tensor forward(torch.Tensor querySrc, torch.Tensor keySrc, torch.Tensor valueSrc,
         bool isMasked)
     {
-        var ouputs = _heads
+        var outputs = _heads
             .Select(h => h.forward(querySrc, keySrc, valueSrc, isMasked))
             .ToList();
 
-        var concatenatedOutputs = torch.cat(ouputs, 2);
+        var concatenatedOutputs = torch.cat(outputs, 2);
 
         return _projection.forward(concatenatedOutputs);
     }
