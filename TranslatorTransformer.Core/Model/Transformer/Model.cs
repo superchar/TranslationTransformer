@@ -15,8 +15,53 @@ public class TransformerInferenceModel : IInferenceModel
         _encoderDecoderTransformer.to(DeviceManager.GetDevice());
     }
 
-    public void Train(IEnumerable<string> documents)
+    public void Train(IEnumerable<(string Source, string Target)> documents)
     {
+        _encoderDecoderTransformer.train();
+
+        const double learningRate = 1e-4;
+        using var optimizer = torch.optim.Adam(_encoderDecoderTransformer.parameters(), lr: learningRate);
+
+        foreach (var (sourceText, targetText) in documents)
+        {
+            using var scope = torch.NewDisposeScope();
+
+            var sourceTokens = _tokenizer.Encode(sourceText);
+            var targetTokens = _tokenizer.Encode(targetText);
+
+            if (sourceTokens.Count == 0 || targetTokens.Count < 2)
+            {
+                continue;
+            }
+
+            var decoderInputTokens = targetTokens.GetRange(0, targetTokens.Count - 1);
+            var decoderTargetTokens = targetTokens.GetRange(1, targetTokens.Count - 1);
+
+            var sourceTensor = torch.tensor(sourceTokens, dtype: torch.ScalarType.Int64)
+                .unsqueeze(0)
+                .to(DeviceManager.GetDevice());
+
+            var decoderInputTensor = torch.tensor(decoderInputTokens, dtype: torch.ScalarType.Int64)
+                .unsqueeze(0)
+                .to(DeviceManager.GetDevice());
+
+            var decoderTargetTensor = torch.tensor(decoderTargetTokens, dtype: torch.ScalarType.Int64)
+                .unsqueeze(0)
+                .to(DeviceManager.GetDevice());
+
+            var modelOutput = _encoderDecoderTransformer.forward(sourceTensor, decoderInputTensor);
+
+            var logits = modelOutput.view(-1, ITokenizer.VocabSize);
+            var targets = decoderTargetTensor.view(-1);
+
+            var loss = torch.nn.functional.cross_entropy(logits, targets);
+
+            optimizer.zero_grad();
+            loss.backward();
+            optimizer.step();
+
+            Console.WriteLine($"Loss value: {loss.item<float>():F4}");
+        }
     }
 
     public IEnumerable<string> PerformInference(string sourceText, string targetText)
@@ -54,14 +99,18 @@ internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.T
     private readonly Linear _linear = torch.nn.Linear(ModelConfiguration.HiddenSize, ITokenizer.VocabSize);
 
     private readonly TransformerEncoder _encoder = new();
+
     private readonly Embedding _encoderPositionalEmbedding =
         torch.nn.Embedding(ModelConfiguration.MaxContextSize, ModelConfiguration.HiddenSize);
+
     private readonly Embedding _encoderTokenEmbedding =
         torch.nn.Embedding(ITokenizer.VocabSize, ModelConfiguration.HiddenSize);
-    
+
     private readonly TransformerDecoder _decoder = new();
+
     private readonly Embedding _decoderPositionalEmbedding =
         torch.nn.Embedding(ModelConfiguration.MaxContextSize, ModelConfiguration.HiddenSize);
+
     private readonly Embedding _decoderTokenEmbedding =
         torch.nn.Embedding(ITokenizer.VocabSize, ModelConfiguration.HiddenSize);
 
@@ -80,7 +129,7 @@ internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.T
         var encoderEmbedding = _encoderPositionalEmbedding.forward(encoderPositions) +
                                _encoderTokenEmbedding.forward(encoderInput);
         var encoderOutput = _encoder.forward(encoderEmbedding);
-        
+
         var decoderPositions = torch.arange(
             decoderInput.shape[1],
             device: decoderInput.device,

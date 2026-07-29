@@ -7,13 +7,11 @@ public partial class BPETokenizer : ITokenizer
 {
     private const string NonImplementedErrorMessage = $"The tokenizer was not trained. Call {nameof(Train)}() first.";
 
-    private int _vocabSize;
     private Dictionary<Bytes, int>? _bytesToTokenMappingTable;
     private Dictionary<int, Bytes> _tokenToBytesMappingTable;
 
     public void Train(IEnumerable<string> documents, int vocabSize)
     {
-        _vocabSize = vocabSize;
         _bytesToTokenMappingTable = new Dictionary<Bytes, int>();
 
         foreach (var basicByte in Enumerable.Range(byte.MinValue, byte.MaxValue + 1))
@@ -22,7 +20,12 @@ public partial class BPETokenizer : ITokenizer
             _bytesToTokenMappingTable[bytes] = basicByte;
         }
 
-        if (_vocabSize <= byte.MaxValue)
+        foreach (var specialToken in ITokenizer.SpecialTokens.All)
+        {
+            _bytesToTokenMappingTable[new Bytes(Encoding.UTF8.GetBytes(specialToken))] = _bytesToTokenMappingTable.Count;
+        }
+
+        if (vocabSize <= byte.MaxValue)
         {
             return;
         }
