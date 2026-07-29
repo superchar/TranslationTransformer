@@ -17,50 +17,54 @@ public class TransformerInferenceModel : IInferenceModel
 
     public void Train(IEnumerable<(string Source, string Target)> documents)
     {
+        const int numberOfIterations = 20;
         _encoderDecoderTransformer.train();
 
         const double learningRate = 1e-4;
         using var optimizer = torch.optim.Adam(_encoderDecoderTransformer.parameters(), lr: learningRate);
 
-        foreach (var (sourceText, targetText) in documents)
+        foreach (var _ in Enumerable.Range(0, numberOfIterations))
         {
-            using var scope = torch.NewDisposeScope();
-
-            var sourceTokens = _tokenizer.Encode(sourceText);
-            var targetTokens = _tokenizer.Encode(targetText);
-
-            if (sourceTokens.Count == 0 || targetTokens.Count < 2)
+            foreach (var (sourceText, targetText) in documents)
             {
-                continue;
+                using var scope = torch.NewDisposeScope();
+
+                var sourceTokens = _tokenizer.Encode(sourceText);
+                var targetTokens = _tokenizer.Encode(targetText);
+
+                if (sourceTokens.Count == 0 || targetTokens.Count < 2)
+                {
+                    continue;
+                }
+
+                var decoderInputTokens = targetTokens[..^1];
+                var decoderTargetTokens = targetTokens[1..];
+
+                var sourceTensor = torch.tensor(sourceTokens, dtype: torch.ScalarType.Int64)
+                    .unsqueeze(0)
+                    .to(DeviceManager.GetDevice());
+
+                var decoderInputTensor = torch.tensor(decoderInputTokens, dtype: torch.ScalarType.Int64)
+                    .unsqueeze(0)
+                    .to(DeviceManager.GetDevice());
+
+                var decoderTargetTensor = torch.tensor(decoderTargetTokens, dtype: torch.ScalarType.Int64)
+                    .unsqueeze(0)
+                    .to(DeviceManager.GetDevice());
+
+                var modelOutput = _encoderDecoderTransformer.forward(sourceTensor, decoderInputTensor);
+
+                var logits = modelOutput.view(-1, ITokenizer.VocabSize);
+                var targets = decoderTargetTensor.view(-1);
+
+                var loss = torch.nn.functional.cross_entropy(logits, targets);
+
+                optimizer.zero_grad();
+                loss.backward();
+                optimizer.step();
+
+                Console.WriteLine($"Loss value: {loss.item<float>():F4}");
             }
-
-            var decoderInputTokens = targetTokens.GetRange(0, targetTokens.Count - 1);
-            var decoderTargetTokens = targetTokens.GetRange(1, targetTokens.Count - 1);
-
-            var sourceTensor = torch.tensor(sourceTokens, dtype: torch.ScalarType.Int64)
-                .unsqueeze(0)
-                .to(DeviceManager.GetDevice());
-
-            var decoderInputTensor = torch.tensor(decoderInputTokens, dtype: torch.ScalarType.Int64)
-                .unsqueeze(0)
-                .to(DeviceManager.GetDevice());
-
-            var decoderTargetTensor = torch.tensor(decoderTargetTokens, dtype: torch.ScalarType.Int64)
-                .unsqueeze(0)
-                .to(DeviceManager.GetDevice());
-
-            var modelOutput = _encoderDecoderTransformer.forward(sourceTensor, decoderInputTensor);
-
-            var logits = modelOutput.view(-1, ITokenizer.VocabSize);
-            var targets = decoderTargetTensor.view(-1);
-
-            var loss = torch.nn.functional.cross_entropy(logits, targets);
-
-            optimizer.zero_grad();
-            loss.backward();
-            optimizer.step();
-
-            Console.WriteLine($"Loss value: {loss.item<float>():F4}");
         }
     }
 
