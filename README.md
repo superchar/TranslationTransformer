@@ -2,3 +2,7 @@ Building encoder-decoder transformer based on [Attention Is All You Need](https:
 
 
 <img width="776" height="711" alt="image" src="https://github.com/user-attachments/assets/37baff2b-edf3-4041-8988-bae90971fd1e" />
+
+After 100_000 iterations with 10 sentences batch size on single Nvidia RTX 4000 GPU it can translate some basic phrases that were not originally in the training dataset.
+
+<img width="1108" height="623" alt="image" src="https://github.com/user-attachments/assets/c2a57ef2-e2fc-4bce-84b1-5c771e76d4f8" />
