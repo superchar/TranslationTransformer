@@ -2,7 +2,7 @@
 
 public interface IInferenceModel
 {
-    void Train(IEnumerable<(string Source, string Target)> documents);
+    void Train(List<(string Source, string Target)> documents);
     
-    IEnumerable<string> PerformInference(string sourceText, string targetText);
+    IEnumerable<int> PerformInference(string sourceText, string targetText);
 }

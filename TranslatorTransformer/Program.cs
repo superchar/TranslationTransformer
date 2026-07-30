@@ -6,7 +6,7 @@ using TranslatorTransformer.Core.Tokenization.BPE;
 
 var engText = File.ReadAllText("Translations/EN.txt");
 var rusText = File.ReadAllText("Translations/RU.txt");
-
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 var tokenizer = new BPETokenizer();
 tokenizer.Train(engText + rusText, ITokenizer.VocabSize);
 var model = new TransformerInferenceModel(tokenizer);
@@ -14,11 +14,15 @@ var model = new TransformerInferenceModel(tokenizer);
 var engLines = engText.Split('\n');
 var rusLines = rusText.Split('\n');
 
-model.Train(engLines.Zip(rusLines));
+model.Train(engLines.Zip(rusLines.Select(l => ITokenizer.SpecialTokens.StartOfTheSequence + l + ITokenizer.SpecialTokens.EndOfTheSequence)).ToList());
 
-var result = model.PerformInference("The cosmos began not with a bang", "");
-
-foreach (var item in result)
+while (true)
 {
-    Console.Write(item);
+    Console.Write("Enter the text: ");
+    var sourceText = Console.ReadLine();
+    var tokens = model.PerformInference(sourceText, "").ToList();
+    
+    Console.WriteLine(tokenizer.Decode(tokens));
+
+    Console.WriteLine();
 }

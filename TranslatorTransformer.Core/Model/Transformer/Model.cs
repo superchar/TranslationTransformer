@@ -15,60 +15,83 @@ public class TransformerInferenceModel : IInferenceModel
         _encoderDecoderTransformer.to(DeviceManager.GetDevice());
     }
 
-    public void Train(IEnumerable<(string Source, string Target)> documents)
+    public void Train(List<(string Source, string Target)> documents)
     {
-        const int numberOfIterations = 20;
+        const int numberOfIterations = 10_000;
+        const int batchSize = 10;
+        var paddingTokenId = _tokenizer.Encode(ITokenizer.SpecialTokens.PaddingToken)[0];
         _encoderDecoderTransformer.train();
 
         const double learningRate = 1e-4;
         using var optimizer = torch.optim.Adam(_encoderDecoderTransformer.parameters(), lr: learningRate);
 
-        foreach (var _ in Enumerable.Range(0, numberOfIterations))
+        foreach (var iteration in Enumerable.Range(0, numberOfIterations))
         {
-            foreach (var (sourceText, targetText) in documents)
+            var random = new Random();
+            var offset = random.Next(0, documents.Count - batchSize);
+            var batch = documents.Skip(offset).Take(batchSize);
+            using var scope = torch.NewDisposeScope();
+
+            var encodedBatch = batch.Select(b => new
             {
-                using var scope = torch.NewDisposeScope();
+                SourceTokens = _tokenizer.Encode(b.Source).Select(t => (long)t).ToList(),
+                TargetTokens = _tokenizer.Encode(b.Target).Select(t => (long)t).ToList()
+            }).Where(b => b.SourceTokens.Count > 0 && b.TargetTokens.Count >= 2).ToList();
 
-                var sourceTokens = _tokenizer.Encode(sourceText);
-                var targetTokens = _tokenizer.Encode(targetText);
+            if (encodedBatch.Count == 0)
+            {
+                continue;
+            }
 
-                if (sourceTokens.Count == 0 || targetTokens.Count < 2)
+            var currentBatchSize = encodedBatch.Count;
+
+            var maxSourceLen = encodedBatch.Max(b => b.SourceTokens.Count);
+            var maxTargetLen = encodedBatch.Max(b => b.TargetTokens.Count) - 1;
+
+            var sourceData = new long[currentBatchSize * maxSourceLen];
+            var decoderInputData = new long[currentBatchSize * maxTargetLen];
+            var decoderTargetData = new long[currentBatchSize * maxTargetLen];
+
+            for (var b = 0; b < currentBatchSize; b++)
+            {
+                var src = encodedBatch[b].SourceTokens;
+                var tgt = encodedBatch[b].TargetTokens;
+
+                for (var s = 0; s < maxSourceLen; s++)
                 {
-                    continue;
+                    sourceData[b * maxSourceLen + s] = s < src.Count ? src[s] : paddingTokenId;
                 }
 
-                var decoderInputTokens = targetTokens[..^1];
-                var decoderTargetTokens = targetTokens[1..];
-
-                var sourceTensor = torch.tensor(sourceTokens, dtype: torch.ScalarType.Int64)
-                    .unsqueeze(0)
-                    .to(DeviceManager.GetDevice());
-
-                var decoderInputTensor = torch.tensor(decoderInputTokens, dtype: torch.ScalarType.Int64)
-                    .unsqueeze(0)
-                    .to(DeviceManager.GetDevice());
-
-                var decoderTargetTensor = torch.tensor(decoderTargetTokens, dtype: torch.ScalarType.Int64)
-                    .unsqueeze(0)
-                    .to(DeviceManager.GetDevice());
-
-                var modelOutput = _encoderDecoderTransformer.forward(sourceTensor, decoderInputTensor);
-
-                var logits = modelOutput.view(-1, ITokenizer.VocabSize);
-                var targets = decoderTargetTensor.view(-1);
-
-                var loss = torch.nn.functional.cross_entropy(logits, targets);
-
-                optimizer.zero_grad();
-                loss.backward();
-                optimizer.step();
-
-                Console.WriteLine($"Loss value: {loss.item<float>():F4}");
+                for (var t = 0; t < maxTargetLen; t++)
+                {
+                    decoderInputData[b * maxTargetLen + t] = t < tgt.Count - 1 ? tgt[t] : paddingTokenId;
+                    decoderTargetData[b * maxTargetLen + t] = t + 1 < tgt.Count ? tgt[t + 1] : paddingTokenId;
+                }
             }
+
+            var sourceTensor = torch.tensor(sourceData, new long[] { currentBatchSize, maxSourceLen })
+                .to(DeviceManager.GetDevice());
+            var decoderInputTensor = torch.tensor(decoderInputData, new long[] { currentBatchSize, maxTargetLen })
+                .to(DeviceManager.GetDevice());
+            var decoderTargetTensor = torch.tensor(decoderTargetData, new long[] { currentBatchSize, maxTargetLen })
+                .to(DeviceManager.GetDevice());
+
+            var modelOutput = _encoderDecoderTransformer.forward(sourceTensor, decoderInputTensor, paddingTokenId);
+
+            var logits = modelOutput.view(-1, ITokenizer.VocabSize);
+            var targets = decoderTargetTensor.view(-1);
+
+            var loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index: paddingTokenId);
+
+            optimizer.zero_grad();
+            loss.backward();
+            optimizer.step();
+
+            Console.WriteLine($"{iteration}) Loss value: {loss.item<float>():F4}");
         }
     }
 
-    public IEnumerable<string> PerformInference(string sourceText, string targetText)
+    public IEnumerable<int> PerformInference(string sourceText, string targetText)
     {
         using var gradScope = torch.no_grad();
         _encoderDecoderTransformer.eval();
@@ -82,23 +105,30 @@ public class TransformerInferenceModel : IInferenceModel
             .to(DeviceManager.GetDevice());
         var targetTextTokens = _tokenizer.Encode(targetText);
 
-        foreach (var _ in Enumerable.Range(0, 10))
+        var endOfSequenceToken = _tokenizer.Encode(ITokenizer.SpecialTokens.EndOfTheSequence)[0];
+        var paddingTokenId = _tokenizer.Encode(ITokenizer.SpecialTokens.PaddingToken)[0];
+
+        while (true)
         {
             using var scope = torch.NewDisposeScope();
             var targetTextTokensTensor = torch.tensor(targetTextTokens)
                 .unsqueeze(0)
                 .to(DeviceManager.GetDevice());
-            var modelOutput = _encoderDecoderTransformer.forward(sourceTextTokensTensor, targetTextTokensTensor);
+            var modelOutput = _encoderDecoderTransformer.forward(sourceTextTokensTensor, targetTextTokensTensor, paddingTokenId);
             var logits = modelOutput[0, -1];
-            var probs = logits.softmax(-1);
-            var nextToken = (int)torch.multinomial(probs, 1).item<long>();
-            yield return _tokenizer.Decode([nextToken]);
+            var nextToken = (int)torch.argmax(logits, -1).item<long>();
+            if (nextToken == endOfSequenceToken)
+            {
+                break;
+            }
+            
+            yield return nextToken;
             targetTextTokens.Add(nextToken);
         }
     }
 }
 
-internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor>
+internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.Tensor, long, torch.Tensor>
 {
     private readonly Linear _linear = torch.nn.Linear(ModelConfiguration.HiddenSize, ITokenizer.VocabSize);
 
@@ -123,33 +153,24 @@ internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.T
         RegisterComponents();
     }
 
-    public override torch.Tensor forward(torch.Tensor encoderInput, torch.Tensor decoderInput)
+    public override torch.Tensor forward(torch.Tensor encoderInput, torch.Tensor decoderInput, long paddingTokenId)
     {
-        var encoderPositions = torch.arange(
-            encoderInput.shape[1],
-            device: encoderInput.device,
-            dtype: torch.ScalarType.Int64
-        ).unsqueeze(0);
-        var encoderEmbedding = _encoderPositionalEmbedding.forward(encoderPositions) +
-                               _encoderTokenEmbedding.forward(encoderInput);
-        var encoderOutput = _encoder.forward(encoderEmbedding);
+        var srcPaddingMask = encoderInput.eq(paddingTokenId).unsqueeze(1).unsqueeze(2);
+        var tgtPaddingMask = decoderInput.eq(paddingTokenId).unsqueeze(1).unsqueeze(2);
 
-        var decoderPositions = torch.arange(
-            decoderInput.shape[1],
-            device: decoderInput.device,
-            dtype: torch.ScalarType.Int64
-        ).unsqueeze(0);
+        var encoderPositions = torch.arange(encoderInput.shape[1], device: encoderInput.device, dtype: torch.ScalarType.Int64).unsqueeze(0);
+        var encoderEmbedding = _encoderPositionalEmbedding.forward(encoderPositions) + _encoderTokenEmbedding.forward(encoderInput);
+        var encoderOutput = _encoder.forward(encoderEmbedding, srcPaddingMask);
 
-        var decoderEmbedding = _decoderPositionalEmbedding.forward(decoderPositions) +
-                               _decoderTokenEmbedding.forward(decoderInput);
-
-        var decoderOutput = _decoder.forward(decoderEmbedding, encoderOutput);
+        var decoderPositions = torch.arange(decoderInput.shape[1], device: decoderInput.device, dtype: torch.ScalarType.Int64).unsqueeze(0);
+        var decoderEmbedding = _decoderPositionalEmbedding.forward(decoderPositions) + _decoderTokenEmbedding.forward(decoderInput);
+        var decoderOutput = _decoder.forward(decoderEmbedding, encoderOutput, tgtPaddingMask, srcPaddingMask);
 
         return _linear.forward(decoderOutput);
     }
 }
 
-internal class TransformerDecoder : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor>
+internal class TransformerDecoder : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor>
 {
     private readonly ModuleList<Block> _blocks;
 
@@ -161,11 +182,13 @@ internal class TransformerDecoder : torch.nn.Module<torch.Tensor, torch.Tensor, 
         RegisterComponents();
     }
 
-    public override torch.Tensor forward(torch.Tensor input, torch.Tensor encoderOutput)
-        => _blocks.Aggregate(input, (current, block) => block.forward(current, encoderOutput, true));
+    public override torch.Tensor forward(torch.Tensor input, torch.Tensor encoderOutput, torch.Tensor tgtPaddingMask, torch.Tensor srcPaddingMask)
+    {
+        return _blocks.Aggregate(input, (current, block) => block.forward(current, encoderOutput, tgtPaddingMask, srcPaddingMask, true));
+    }
 }
 
-internal class TransformerEncoder : torch.nn.Module<torch.Tensor, torch.Tensor>
+internal class TransformerEncoder : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor>
 {
     private readonly ModuleList<Block> _blocks;
 
@@ -177,18 +200,17 @@ internal class TransformerEncoder : torch.nn.Module<torch.Tensor, torch.Tensor>
         RegisterComponents();
     }
 
-    public override torch.Tensor forward(torch.Tensor input)
+    public override torch.Tensor forward(torch.Tensor input, torch.Tensor srcPaddingMask)
     {
         foreach (var block in _blocks)
         {
-            input = block.forward(input, null, false);
+            input = block.forward(input, null, srcPaddingMask, null, false);
         }
-
         return input;
     }
 }
 
-internal class Block : torch.nn.Module<torch.Tensor, torch.Tensor, bool, torch.Tensor>
+internal class Block : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, bool, torch.Tensor>
 {
     private readonly MLP _mlp;
     private readonly LayerNorm _mlpLayerNorm;
@@ -214,15 +236,13 @@ internal class Block : torch.nn.Module<torch.Tensor, torch.Tensor, bool, torch.T
         RegisterComponents();
     }
 
-
-    public override torch.Tensor forward(torch.Tensor tgt, torch.Tensor? src, bool isMasked)
+    public override torch.Tensor forward(torch.Tensor tgt, torch.Tensor? src, torch.Tensor? selfAttentionMask, torch.Tensor? crossAttentionMask, bool isCausalMasked)
     {
-        tgt = _multiHeadSelfAttentionLayerNorm.forward(tgt + _multiHeadSelfAttention.forward(tgt, tgt, tgt, isMasked));
+        tgt = _multiHeadSelfAttentionLayerNorm.forward(tgt + _multiHeadSelfAttention.forward(tgt, tgt, tgt, selfAttentionMask, isCausalMasked));
 
         if (src is not null)
         {
-            tgt = _multiHeadCrossAttentionLayerNorm.forward(tgt +
-                                                            _multiHeadCrossAttention.forward(tgt, src, src, false));
+            tgt = _multiHeadCrossAttentionLayerNorm.forward(tgt + _multiHeadCrossAttention.forward(tgt, src, src, crossAttentionMask, false));
         }
 
         return _mlpLayerNorm.forward(tgt + _mlp.forward(tgt));
@@ -251,67 +271,77 @@ internal class MLP : torch.nn.Module<torch.Tensor, torch.Tensor>
 
 internal class MultiHeadedAttention : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor, bool, torch.Tensor>
 {
-    private readonly Linear _projection;
-    private readonly ModuleList<AttentionHead> _heads;
+    private readonly int _numHeads;
+    private readonly int _headSize;
+    private readonly double _scalingFactor;
+
+    private readonly Linear _qProj;
+    private readonly Linear _kProj;
+    private readonly Linear _vProj;
+    private readonly Linear _outProj;
 
     public MultiHeadedAttention() : base("Multi headed attention")
     {
-        _projection = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HiddenSize);
+        _numHeads = ModelConfiguration.NumHeads;
+        // Ensure HiddenSize is evenly divisible by NumHeads
+        _headSize = ModelConfiguration.HiddenSize / ModelConfiguration.NumHeads;
+        _scalingFactor = Math.Sqrt(_headSize);
 
-        _heads = torch.nn.ModuleList(Enumerable.Range(0, ModelConfiguration.NumHeads)
-            .Select(n => new AttentionHead(n))
-            .ToArray());
+        // Project the entire hidden dimension at once
+        _qProj = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HiddenSize);
+        _kProj = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HiddenSize);
+        _vProj = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HiddenSize);
 
-        RegisterComponents();
-    }
+        _outProj = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HiddenSize);
 
-    public override torch.Tensor forward(torch.Tensor querySrc, torch.Tensor keySrc, torch.Tensor valueSrc,
-        bool isMasked)
-    {
-        var outputs = _heads
-            .Select(h => h.forward(querySrc, keySrc, valueSrc, isMasked))
-            .ToList();
-
-        var concatenatedOutputs = torch.cat(outputs, 2);
-
-        return _projection.forward(concatenatedOutputs);
-    }
-}
-
-internal class AttentionHead : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor, bool, torch.Tensor>
-{
-    private readonly Linear _key;
-    private readonly Linear _query;
-    private readonly Linear _value;
-
-    private readonly double _scalingFactor;
-
-    public AttentionHead(int number) : base($"AttentionHead({number})")
-    {
-        _key = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HeadSize);
-        _query = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HeadSize);
-        _value = torch.nn.Linear(ModelConfiguration.HiddenSize, ModelConfiguration.HeadSize);
-
-        _scalingFactor = Math.Sqrt(ModelConfiguration.HeadSize);
+        // Initialize locally just to register it. Do not store it in a C# class field.
+        var initialMask = torch.tril(torch.ones(ModelConfiguration.MaxContextSize, ModelConfiguration.MaxContextSize,
+            device: DeviceManager.GetDevice())).eq(0);
+        register_buffer("causal_mask", initialMask);
 
         RegisterComponents();
     }
 
-    public override torch.Tensor forward(torch.Tensor querySrc, torch.Tensor keySrc, torch.Tensor valueSrc,
-        bool isMasked)
+    public torch.Tensor forward(torch.Tensor querySrc, torch.Tensor keySrc, torch.Tensor valueSrc,
+        torch.Tensor? paddingMask, bool isMasked)
     {
-        var query = _query.forward(querySrc);
-        var key = _key.forward(keySrc);
-        var value = _value.forward(valueSrc);
+        var batchSize = querySrc.shape[0];
+        var seqLenQ = querySrc.shape[1];
+        var seqLenKV = keySrc.shape[1];
 
-        var attentionScores = query.matmul(key.transpose(2, 1)) / _scalingFactor;
-        if (isMasked)
+        var q = _qProj.forward(querySrc);
+        var k = _kProj.forward(keySrc);
+        var v = _vProj.forward(valueSrc);
+
+        q = q.view(batchSize, seqLenQ, _numHeads, _headSize).transpose(1, 2);
+        k = k.view(batchSize, seqLenKV, _numHeads, _headSize).transpose(1, 2);
+        v = v.view(batchSize, seqLenKV, _numHeads, _headSize).transpose(1, 2);
+
+        var kTransposed = k.transpose(-2, -1);
+        var scores = q.matmul(kTransposed) / _scalingFactor;
+
+        if (paddingMask is not null)
         {
-            var mask = torch.tril(torch.ones(query.shape[1], query.shape[1])).eq(0);
-            mask = mask.to(DeviceManager.GetDevice());
-            attentionScores = attentionScores.masked_fill(mask, float.NegativeInfinity);
+            scores = scores.masked_fill(paddingMask, float.NegativeInfinity);
         }
 
-        return torch.softmax(attentionScores, 2).matmul(value);
+        if (isMasked)
+        {
+            var activeMask = get_buffer("causal_mask");
+            var mask = activeMask.narrow(0, 0, seqLenQ).narrow(1, 0, seqLenKV);
+            scores = scores.masked_fill(mask, float.NegativeInfinity);
+        }
+
+        var attention = torch.softmax(scores, -1);
+        var context = attention.matmul(v);
+
+        context = context.transpose(1, 2).contiguous().view(batchSize, seqLenQ, ModelConfiguration.HiddenSize);
+
+        return _outProj.forward(context);
     }
+
+    // Retain generic compatibility layer for Module generic definitions
+    public override torch.Tensor forward(torch.Tensor querySrc, torch.Tensor keySrc, torch.Tensor valueSrc,
+        bool isMasked)
+        => forward(querySrc, keySrc, valueSrc, null, isMasked);
 }

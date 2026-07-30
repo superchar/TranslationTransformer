@@ -2,18 +2,22 @@
 
 public interface ITokenizer
 {
-    public const int VocabSize = 300;
+    public const int VocabSize = 1000;
 
     void Train(string content, int vocabSize);
 
     List<int> Encode(string content);
 
-    string Decode(int[] encoded);
+    string Decode(List<int> encoded);
     
     public static class SpecialTokens
     {
-        public const string StartOfTheSequence = "<|START|>";
+        public const string StartOfTheSequence = "<START>";
+        
+        public const string EndOfTheSequence = "<END>";
+        
+        public const string PaddingToken = "<PADDING>";
 
-        public static string[] All = [StartOfTheSequence];
+        public static readonly string[] All = [StartOfTheSequence, EndOfTheSequence, PaddingToken];
     }
 }

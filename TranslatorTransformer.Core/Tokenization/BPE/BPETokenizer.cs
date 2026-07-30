@@ -7,6 +7,13 @@ public partial class BPETokenizer : ITokenizer
 {
     private const string NonImplementedErrorMessage = $"The tokenizer was not trained. Call {nameof(Train)}() first.";
 
+    private static readonly string SpecialTokensPattern = 
+        string.Join("|", ITokenizer.SpecialTokens.All.Select(Regex.Escape));
+    
+    private static readonly Regex WordSplittingRegex = new(
+        $"{SpecialTokensPattern}|'s|'t|'re|'ve|'m|'ll|'d| ?\\p{{L}}+| ?\\p{{N}}+| ?(?:(?!(?:{SpecialTokensPattern}))[^\\s\\p{{L}}\\p{{N}}])+|\\s+(?!\\S)|\\s+\n",
+        RegexOptions.Compiled);
+
     private Dictionary<Bytes, int>? _bytesToTokenMappingTable;
     private Dictionary<int, Bytes> _tokenToBytesMappingTable;
 
@@ -23,17 +30,19 @@ public partial class BPETokenizer : ITokenizer
 
         foreach (var specialToken in ITokenizer.SpecialTokens.All)
         {
-            _bytesToTokenMappingTable[new Bytes(Encoding.UTF8.GetBytes(specialToken))] =
-                _bytesToTokenMappingTable.Count;
+            var bytes = GetWordBytes(specialToken);
+            var mergedWord = bytes.Aggregate(new Bytes([]), (acc, b) => acc.Merge(b));
+            _bytesToTokenMappingTable[mergedWord] = _bytesToTokenMappingTable.Count;
         }
-
+        
         if (vocabSize <= byte.MaxValue)
         {
             return;
         }
 
         var words = GetWords(content)
-            .GroupBy(w => w)
+            .Where(w => w.Type == WordType.Regular)
+            .GroupBy(w => w.Content)
             .Select(g => (Word: GetWordBytes(g.Key), Count: g.Count()))
             .ToList();
 
@@ -60,15 +69,30 @@ public partial class BPETokenizer : ITokenizer
         _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
     }
 
+
     public List<int> Encode(string content)
     {
         ThrowIfNotTrained();
 
         var words = GetWordsBytes(content);
+        for (var i = 0; i < words.Count; i++)
+        {
+            if (words[i].Type != WordType.SpecialToken)
+            {
+                continue;
+            }
+            
+            var aggregatedBytes = words[i].Bytes.Aggregate(new Bytes([]), (acc, b) => acc.Merge(b));
+            words[i] = words[i] with { Bytes = [aggregatedBytes] };
+        }
 
+        var regularWords = words
+            .Where(w => w.Type == WordType.Regular)
+            .ToList();
+        
         while (true)
         {
-            var leastFrequentPairMappingTable = GetPairFrequency(words);
+            var leastFrequentPairMappingTable = GetPairFrequency(regularWords);
 
             if (leastFrequentPairMappingTable.Count == 0)
             {
@@ -99,24 +123,20 @@ public partial class BPETokenizer : ITokenizer
             MergeBytes(words, firstLeastFrequentByte, secondLeastFrequentByte);
         }
 
-        return words.SelectMany(word => word
+        return words.SelectMany(word => word.Bytes
                 .Select(wordByte => _bytesToTokenMappingTable[wordByte]))
             .ToList();
     }
 
-    public string Decode(int[] encoded)
+    public string Decode(List<int> encoded)
         => Encoding.UTF8.GetString(encoded
             .SelectMany(token => _tokenToBytesMappingTable[token].Data)
             .ToArray());
 
 
-    [GeneratedRegex("'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+\n",
-        RegexOptions.Compiled)]
-    private static partial Regex WordSplittingRegex();
-
-    private static List<List<Bytes>> GetWordsBytes(string content)
+    private static List<Word> GetWordsBytes(string content)
         => GetWords(content)
-            .Select(GetWordBytes)
+            .Select(w => w with { Bytes = GetWordBytes(w.Content) })
             .ToList();
 
     private static List<Bytes> GetWordBytes(string word)
@@ -124,30 +144,30 @@ public partial class BPETokenizer : ITokenizer
             .Select(b => new Bytes([b]))
             .ToList();
 
-    private static List<string> GetWords(string content)
+    private static List<Word> GetWords(string content)
     {
-        var wordSplittingRegex = WordSplittingRegex();
-
-        return wordSplittingRegex
+        return WordSplittingRegex
             .Matches(content)
-            .Select(m => m.Value)
+            .Select(m =>
+                new Word(ITokenizer.SpecialTokens.All.Contains(m.Value) ? WordType.SpecialToken : WordType.Regular,
+                    m.Value))
             .ToList();
     }
 
-    private static void MergeBytes(List<List<Bytes>> words, Bytes first, Bytes second)
+    private static void MergeBytes(List<Word> words, Bytes first, Bytes second)
     {
         foreach (var word in words)
         {
-            for (var i = 0; i < word.Count - 1; i++)
+            for (var i = 0; i < word.Bytes.Count - 1; i++)
             {
-                if (!word[i].Equals(first) ||
-                    !word[i + 1].Equals(second))
+                if (!word.Bytes[i].Equals(first) ||
+                    !word.Bytes[i + 1].Equals(second))
                 {
                     continue;
                 }
 
-                word[i] = first.Merge(second);
-                word.RemoveAt(i + 1);
+                word.Bytes[i] = first.Merge(second);
+                word.Bytes.RemoveAt(i + 1);
                 i--;
             }
         }
@@ -172,11 +192,11 @@ public partial class BPETokenizer : ITokenizer
         }
     }
 
-    private static Dictionary<(Bytes, Bytes), int> GetPairFrequency(List<List<Bytes>> words)
+    private static Dictionary<(Bytes, Bytes), int> GetPairFrequency(List<Word> words)
     {
         var frequencyTable = new Dictionary<(Bytes, Bytes), int>();
 
-        foreach (var word in words.SelectMany(word => word.Zip(word.Skip(1))))
+        foreach (var word in words.SelectMany(word => word.Bytes.Zip(word.Bytes.Skip(1))))
         {
             frequencyTable[word] = frequencyTable.GetValueOrDefault(word, 0) + 1;
         }
