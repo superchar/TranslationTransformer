@@ -15,9 +15,8 @@ public class TransformerInferenceModel : IInferenceModel
         _encoderDecoderTransformer.to(DeviceManager.GetDevice());
     }
 
-    public void Train(List<(string Source, string Target)> documents)
+    public void Train(List<(string Source, string Target)> documents, int numberOfIterations)
     {
-        const int numberOfIterations = 100;
         const int batchSize = 10;
         var paddingTokenId = _tokenizer.Encode(ITokenizer.SpecialTokens.PaddingToken)[0];
         _encoderDecoderTransformer.train();
@@ -28,7 +27,7 @@ public class TransformerInferenceModel : IInferenceModel
         foreach (var iteration in Enumerable.Range(0, numberOfIterations))
         {
             var random = new Random();
-            var offset = random.Next(0, documents.Count - batchSize);
+            var offset = documents.Count <= batchSize ? 0 : random.Next(0, documents.Count - batchSize);
             var batch = documents.Skip(offset).Take(batchSize);
             using var scope = torch.NewDisposeScope();
 
@@ -114,14 +113,15 @@ public class TransformerInferenceModel : IInferenceModel
             var targetTextTokensTensor = torch.tensor(targetTextTokens)
                 .unsqueeze(0)
                 .to(DeviceManager.GetDevice());
-            var modelOutput = _encoderDecoderTransformer.forward(sourceTextTokensTensor, targetTextTokensTensor, paddingTokenId);
+            var modelOutput =
+                _encoderDecoderTransformer.forward(sourceTextTokensTensor, targetTextTokensTensor, paddingTokenId);
             var logits = modelOutput[0, -1];
             var nextToken = (int)torch.argmax(logits, -1).item<long>();
             if (nextToken == endOfSequenceToken)
             {
                 break;
             }
-            
+
             yield return nextToken;
             targetTextTokens.Add(nextToken);
         }
@@ -158,19 +158,26 @@ internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.T
         var srcPaddingMask = encoderInput.eq(paddingTokenId).unsqueeze(1).unsqueeze(2);
         var tgtPaddingMask = decoderInput.eq(paddingTokenId).unsqueeze(1).unsqueeze(2);
 
-        var encoderPositions = torch.arange(encoderInput.shape[1], device: encoderInput.device, dtype: torch.ScalarType.Int64).unsqueeze(0);
-        var encoderEmbedding = _encoderPositionalEmbedding.forward(encoderPositions) + _encoderTokenEmbedding.forward(encoderInput);
+        var encoderPositions =
+            torch.arange(encoderInput.shape[1], device: encoderInput.device, dtype: torch.ScalarType.Int64)
+                .unsqueeze(0);
+        var encoderEmbedding = _encoderPositionalEmbedding.forward(encoderPositions) +
+                               _encoderTokenEmbedding.forward(encoderInput);
         var encoderOutput = _encoder.forward(encoderEmbedding, srcPaddingMask);
 
-        var decoderPositions = torch.arange(decoderInput.shape[1], device: decoderInput.device, dtype: torch.ScalarType.Int64).unsqueeze(0);
-        var decoderEmbedding = _decoderPositionalEmbedding.forward(decoderPositions) + _decoderTokenEmbedding.forward(decoderInput);
+        var decoderPositions =
+            torch.arange(decoderInput.shape[1], device: decoderInput.device, dtype: torch.ScalarType.Int64)
+                .unsqueeze(0);
+        var decoderEmbedding = _decoderPositionalEmbedding.forward(decoderPositions) +
+                               _decoderTokenEmbedding.forward(decoderInput);
         var decoderOutput = _decoder.forward(decoderEmbedding, encoderOutput, tgtPaddingMask, srcPaddingMask);
 
         return _linear.forward(decoderOutput);
     }
 }
 
-internal class TransformerDecoder : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor>
+internal class
+    TransformerDecoder : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor>
 {
     private readonly ModuleList<Block> _blocks;
 
@@ -182,9 +189,11 @@ internal class TransformerDecoder : torch.nn.Module<torch.Tensor, torch.Tensor, 
         RegisterComponents();
     }
 
-    public override torch.Tensor forward(torch.Tensor input, torch.Tensor encoderOutput, torch.Tensor tgtPaddingMask, torch.Tensor srcPaddingMask)
+    public override torch.Tensor forward(torch.Tensor input, torch.Tensor encoderOutput, torch.Tensor tgtPaddingMask,
+        torch.Tensor srcPaddingMask)
     {
-        return _blocks.Aggregate(input, (current, block) => block.forward(current, encoderOutput, tgtPaddingMask, srcPaddingMask, true));
+        return _blocks.Aggregate(input,
+            (current, block) => block.forward(current, encoderOutput, tgtPaddingMask, srcPaddingMask, true));
     }
 }
 
@@ -206,6 +215,7 @@ internal class TransformerEncoder : torch.nn.Module<torch.Tensor, torch.Tensor, 
         {
             input = block.forward(input, null, srcPaddingMask, null, false);
         }
+
         return input;
     }
 }
@@ -236,13 +246,18 @@ internal class Block : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor,
         RegisterComponents();
     }
 
-    public override torch.Tensor forward(torch.Tensor tgt, torch.Tensor? src, torch.Tensor? selfAttentionMask, torch.Tensor? crossAttentionMask, bool isCausalMasked)
+    public override torch.Tensor forward(torch.Tensor tgt, torch.Tensor? src, torch.Tensor? selfAttentionMask,
+        torch.Tensor? crossAttentionMask, bool isCausalMasked)
     {
-        tgt = _multiHeadSelfAttentionLayerNorm.forward(tgt + _multiHeadSelfAttention.forward(tgt, tgt, tgt, selfAttentionMask, isCausalMasked));
+        tgt = _multiHeadSelfAttentionLayerNorm.forward(tgt +
+                                                       _multiHeadSelfAttention.forward(tgt, tgt, tgt, selfAttentionMask,
+                                                           isCausalMasked));
 
         if (src is not null)
         {
-            tgt = _multiHeadCrossAttentionLayerNorm.forward(tgt + _multiHeadCrossAttention.forward(tgt, src, src, crossAttentionMask, false));
+            tgt = _multiHeadCrossAttentionLayerNorm.forward(tgt +
+                                                            _multiHeadCrossAttention.forward(tgt, src, src,
+                                                                crossAttentionMask, false));
         }
 
         return _mlpLayerNorm.forward(tgt + _mlp.forward(tgt));

@@ -3,6 +3,7 @@
 using TranslatorTransformer.Core.Model.Transformer;
 using TranslatorTransformer.Core.Tokenization;
 using TranslatorTransformer.Core.Tokenization.BPE;
+const int numberOfIterations = 100;
 
 var engText = File.ReadAllText("Translations/EN.txt");
 var rusText = File.ReadAllText("Translations/RU.txt");
@@ -14,7 +15,10 @@ var model = new TransformerInferenceModel(tokenizer);
 var engLines = engText.Split('\n');
 var rusLines = rusText.Split('\n');
 
-model.Train(engLines.Zip(rusLines.Select(l => ITokenizer.SpecialTokens.StartOfTheSequence + l + ITokenizer.SpecialTokens.EndOfTheSequence)).ToList());
+model.Train(
+    engLines.Zip(rusLines.Select(l =>
+        ITokenizer.SpecialTokens.StartOfTheSequence + l + ITokenizer.SpecialTokens.EndOfTheSequence)).ToList(),
+    numberOfIterations);
 
 while (true)
 {
