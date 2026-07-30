@@ -2,7 +2,7 @@
 
 public interface ITokenizer
 {
-    public const int VocabSize = 1000;
+    public const int VocabSize = 20_000;
 
     void Train(string content, int vocabSize);
 

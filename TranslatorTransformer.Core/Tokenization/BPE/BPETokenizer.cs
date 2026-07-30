@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace TranslatorTransformer.Core.Tokenization.BPE;
@@ -6,6 +7,7 @@ namespace TranslatorTransformer.Core.Tokenization.BPE;
 public class BPETokenizer : ITokenizer
 {
     private const string NonImplementedErrorMessage = $"The tokenizer was not trained. Call {nameof(Train)}() first.";
+    private const string CachingFileName = "BPETokenizerCache.json";
 
     private static readonly string SpecialTokensPattern = 
         string.Join("|", ITokenizer.SpecialTokens.All.Select(Regex.Escape));
@@ -22,6 +24,15 @@ public class BPETokenizer : ITokenizer
     public void Train(string content, int vocabSize)
     {
         Console.WriteLine($"Training a tokenizer to be {vocabSize} words.");
+        var cachedMergingTable = GetFromCache();
+        if (cachedMergingTable != null)
+        {
+            Console.WriteLine("Used tokenizer cache");
+            _bytesToTokenMappingTable = cachedMergingTable;
+            _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
+            return;
+        }
+        
         _bytesToTokenMappingTable = new Dictionary<Bytes, int>();
 
         foreach (var basicByte in Enumerable.Range(byte.MinValue, byte.MaxValue + 1))
@@ -40,6 +51,7 @@ public class BPETokenizer : ITokenizer
         if (vocabSize <= byte.MaxValue)
         {
             _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
+            SetToCache(_bytesToTokenMappingTable);
             return;
         }
 
@@ -69,6 +81,7 @@ public class BPETokenizer : ITokenizer
             Console.WriteLine($"{_bytesToTokenMappingTable.Count} tokens created.");
         }
 
+        SetToCache(_bytesToTokenMappingTable);
         _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
     }
 
@@ -227,6 +240,32 @@ public class BPETokenizer : ITokenizer
         return frequencyTable;
     }
 
+    private static Dictionary<Bytes, int>? GetFromCache()
+    {
+        if (!File.Exists(CachingFileName))
+        {
+            return null;
+        }
+    
+        var content = File.ReadAllText(CachingFileName);
+        var intermediate = JsonSerializer.Deserialize<Dictionary<string, int>>(content);
+
+        return intermediate?.ToDictionary(
+            kvp => new Bytes(Convert.FromBase64String(kvp.Key)),
+            kvp => kvp.Value
+        );
+    }
+
+    private static void SetToCache(Dictionary<Bytes, int> bytesToTokenMappingTable)
+    {
+        var intermediate = bytesToTokenMappingTable.ToDictionary(
+            kvp => Convert.ToBase64String(kvp.Key.Data.ToArray()),
+            kvp => kvp.Value
+        );
+    
+        var json = JsonSerializer.Serialize(intermediate);
+        File.WriteAllText(CachingFileName, json);
+    }
 
     private void ThrowIfNotTrained()
     {

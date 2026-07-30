@@ -6,6 +6,8 @@ namespace TranslatorTransformer.Core.Model.Transformer;
 
 public class TransformerInferenceModel : IInferenceModel
 {
+    private const string CachingFileName = "TransformerWeightsCache.dat";
+    
     private readonly ITokenizer _tokenizer;
     private readonly EncoderDecoderTransformer _encoderDecoderTransformer = new();
 
@@ -17,6 +19,13 @@ public class TransformerInferenceModel : IInferenceModel
 
     public void Train(List<(string Source, string Target)> documents, int numberOfIterations)
     {
+        if (File.Exists(CachingFileName))
+        {
+            Console.WriteLine("Used model weights cache.");
+            _encoderDecoderTransformer.load(CachingFileName);
+            return; 
+        }
+        
         const int batchSize = 10;
         var paddingTokenId = _tokenizer.Encode(ITokenizer.SpecialTokens.PaddingToken)[0];
         _encoderDecoderTransformer.train();
@@ -88,6 +97,9 @@ public class TransformerInferenceModel : IInferenceModel
 
             Console.WriteLine($"{iteration}) Loss value: {loss.item<float>():F4}");
         }
+        
+        _encoderDecoderTransformer.save(CachingFileName);
+        Console.WriteLine("Model weights saved to internal cache successfully.");
     }
 
     public IEnumerable<int> PerformInference(string sourceText, string targetText)

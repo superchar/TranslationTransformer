@@ -6,7 +6,7 @@ public static class ModelConfiguration
 
     public const int NumHeads = 8;
 
-    public const int NumBlocks = 4;
+    public const int NumBlocks = 8;
 
     public const int MLPScalingFactor = 4;
 

@@ -3,7 +3,7 @@
 using TranslatorTransformer.Core.Model.Transformer;
 using TranslatorTransformer.Core.Tokenization;
 using TranslatorTransformer.Core.Tokenization.BPE;
-const int numberOfIterations = 100;
+const int numberOfIterations = 100_000;
 
 var engText = File.ReadAllText("Translations/EN.txt");
 var rusText = File.ReadAllText("Translations/RU.txt");
