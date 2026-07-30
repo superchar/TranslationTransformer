@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace TranslatorTransformer.Core.Tokenization.BPE;
 
-public partial class BPETokenizer : ITokenizer
+public class BPETokenizer : ITokenizer
 {
     private const string NonImplementedErrorMessage = $"The tokenizer was not trained. Call {nameof(Train)}() first.";
 
@@ -17,6 +17,8 @@ public partial class BPETokenizer : ITokenizer
     private Dictionary<Bytes, int>? _bytesToTokenMappingTable;
     private Dictionary<int, Bytes> _tokenToBytesMappingTable;
 
+    public int VocabSize => _bytesToTokenMappingTable?.Count ?? 0;
+    
     public void Train(string content, int vocabSize)
     {
         Console.WriteLine($"Training a tokenizer to be {vocabSize} words.");
@@ -37,6 +39,7 @@ public partial class BPETokenizer : ITokenizer
         
         if (vocabSize <= byte.MaxValue)
         {
+            _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
             return;
         }
 
@@ -129,9 +132,13 @@ public partial class BPETokenizer : ITokenizer
     }
 
     public string Decode(List<int> encoded)
-        => Encoding.UTF8.GetString(encoded
+    {
+        ThrowIfNotTrained();
+        
+        return  Encoding.UTF8.GetString(encoded
             .SelectMany(token => _tokenToBytesMappingTable[token].Data)
             .ToArray());
+    }
 
 
     private static List<Word> GetWordsBytes(string content)

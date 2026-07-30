@@ -17,7 +17,7 @@ public class TransformerInferenceModel : IInferenceModel
 
     public void Train(List<(string Source, string Target)> documents)
     {
-        const int numberOfIterations = 10_000;
+        const int numberOfIterations = 100;
         const int batchSize = 10;
         var paddingTokenId = _tokenizer.Encode(ITokenizer.SpecialTokens.PaddingToken)[0];
         _encoderDecoderTransformer.train();
