@@ -7,7 +7,7 @@ namespace TranslatorTransformer.Core.Tokenization.BPE;
 public class BPETokenizer : ITokenizer
 {
     private const string NonImplementedErrorMessage = $"The tokenizer was not trained. Call {nameof(Train)}() first.";
-    private const string CachingFileName = "BPETokenizerCache.json";
+    private static readonly string CachingFileName =  $"Cache{Path.DirectorySeparatorChar}BPETokenizerCache.json";
 
     private static readonly string SpecialTokensPattern = 
         string.Join("|", ITokenizer.SpecialTokens.All.Select(Regex.Escape));
@@ -21,16 +21,19 @@ public class BPETokenizer : ITokenizer
 
     public int VocabSize => _bytesToTokenMappingTable?.Count ?? 0;
     
-    public void Train(string content, int vocabSize)
+    public void Train(string content, int vocabSize, bool useCache = true)
     {
         Console.WriteLine($"Training a tokenizer to be {vocabSize} words.");
-        var cachedMergingTable = GetFromCache();
-        if (cachedMergingTable != null)
+        if (useCache)
         {
-            Console.WriteLine("Used tokenizer cache");
-            _bytesToTokenMappingTable = cachedMergingTable;
-            _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
-            return;
+            var cachedMergingTable = GetFromCache();
+            if (cachedMergingTable != null)
+            {
+                Console.WriteLine("Used tokenizer cache");
+                _bytesToTokenMappingTable = cachedMergingTable;
+                _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
+                return;
+            }
         }
         
         _bytesToTokenMappingTable = new Dictionary<Bytes, int>();
@@ -51,7 +54,11 @@ public class BPETokenizer : ITokenizer
         if (vocabSize <= byte.MaxValue)
         {
             _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
-            SetToCache(_bytesToTokenMappingTable);
+            if (useCache)
+            {
+                SetToCache(_bytesToTokenMappingTable);
+            }
+            
             return;
         }
 
@@ -81,7 +88,11 @@ public class BPETokenizer : ITokenizer
             Console.WriteLine($"{_bytesToTokenMappingTable.Count} tokens created.");
         }
 
-        SetToCache(_bytesToTokenMappingTable);
+        if (useCache)
+        {
+            SetToCache(_bytesToTokenMappingTable);
+        }
+
         _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
     }
 
@@ -148,7 +159,7 @@ public class BPETokenizer : ITokenizer
     {
         ThrowIfNotTrained();
         
-        return  Encoding.UTF8.GetString(encoded
+        return Encoding.UTF8.GetString(encoded
             .SelectMany(token => _tokenToBytesMappingTable[token].Data)
             .ToArray());
     }

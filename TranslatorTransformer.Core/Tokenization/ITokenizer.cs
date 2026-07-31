@@ -4,7 +4,7 @@ public interface ITokenizer
 {
     public const int VocabSize = 20_000;
 
-    void Train(string content, int vocabSize);
+    void Train(string content, int vocabSize, bool useCache = true);
 
     List<int> Encode(string content);
 

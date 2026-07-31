@@ -20,6 +20,21 @@
       <Content Include="Translations\RU.txt">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </Content>
+      <None Remove="TransformerWeightsCache.dat" />
+      <None Remove="BPETokenizerCache.json" />
+      <Content Update="Cache\BPETokenizerCache.json">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+      <Content Update="Cache\TransformerWeightsCache.dat">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+      <None Update="Cache\BPETokenizerCache.json">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Remove="Cache\TransformerWeightsCache.dat" />
+      <Content Include="Cache\TransformerWeightsCache.dat">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
     </ItemGroup>
     
 

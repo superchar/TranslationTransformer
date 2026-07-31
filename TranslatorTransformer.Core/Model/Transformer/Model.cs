@@ -6,7 +6,7 @@ namespace TranslatorTransformer.Core.Model.Transformer;
 
 public class TransformerInferenceModel : IInferenceModel
 {
-    private const string CachingFileName = "TransformerWeightsCache.dat";
+    private static readonly string CachingFileName = $"Cache{Path.DirectorySeparatorChar}TransformerWeightsCache.dat";
     
     private readonly ITokenizer _tokenizer;
     private readonly EncoderDecoderTransformer _encoderDecoderTransformer = new();
@@ -17,9 +17,9 @@ public class TransformerInferenceModel : IInferenceModel
         _encoderDecoderTransformer.to(DeviceManager.GetDevice());
     }
 
-    public void Train(List<(string Source, string Target)> documents, int numberOfIterations)
+    public void Train(List<(string Source, string Target)> documents, int numberOfIterations, bool useCache = true)
     {
-        if (File.Exists(CachingFileName))
+        if (File.Exists(CachingFileName) && useCache)
         {
             Console.WriteLine("Used model weights cache.");
             _encoderDecoderTransformer.load(CachingFileName);
@@ -36,8 +36,9 @@ public class TransformerInferenceModel : IInferenceModel
         foreach (var iteration in Enumerable.Range(0, numberOfIterations))
         {
             var random = new Random();
-            var offset = documents.Count <= batchSize ? 0 : random.Next(0, documents.Count - batchSize);
-            var batch = documents.Skip(offset).Take(batchSize);
+             var batch = documents.Count <= batchSize ? documents : Enumerable.Range(0, batchSize)
+                .Select(_ => documents[random.Next(documents.Count)])
+                .ToList();
             using var scope = torch.NewDisposeScope();
 
             var encodedBatch = batch.Select(b => new
@@ -90,16 +91,21 @@ public class TransformerInferenceModel : IInferenceModel
             var targets = decoderTargetTensor.view(-1);
 
             var loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index: paddingTokenId);
+            
 
             optimizer.zero_grad();
             loss.backward();
+            torch.nn.utils.clip_grad_norm_(_encoderDecoderTransformer.parameters(), 1.0);
             optimizer.step();
 
             Console.WriteLine($"{iteration}) Loss value: {loss.item<float>():F4}");
         }
-        
-        _encoderDecoderTransformer.save(CachingFileName);
-        Console.WriteLine("Model weights saved to internal cache successfully.");
+
+        if (useCache)
+        {
+            _encoderDecoderTransformer.save(CachingFileName);
+            Console.WriteLine("Model weights saved to internal cache successfully.");
+        }
     }
 
     public IEnumerable<int> PerformInference(string sourceText, string targetText)
@@ -143,6 +149,9 @@ public class TransformerInferenceModel : IInferenceModel
 internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.Tensor, long, torch.Tensor>
 {
     private readonly Linear _linear = torch.nn.Linear(ModelConfiguration.HiddenSize, ITokenizer.VocabSize);
+    
+    private readonly LayerNorm _encoderFinalNorm = torch.nn.LayerNorm(ModelConfiguration.HiddenSize);
+    private readonly LayerNorm _decoderFinalNorm = torch.nn.LayerNorm(ModelConfiguration.HiddenSize);
 
     private readonly TransformerEncoder _encoder = new();
 
@@ -176,6 +185,7 @@ internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.T
         var encoderEmbedding = _encoderPositionalEmbedding.forward(encoderPositions) +
                                _encoderTokenEmbedding.forward(encoderInput);
         var encoderOutput = _encoder.forward(encoderEmbedding, srcPaddingMask);
+        encoderOutput = _encoderFinalNorm.forward(encoderOutput);
 
         var decoderPositions =
             torch.arange(decoderInput.shape[1], device: decoderInput.device, dtype: torch.ScalarType.Int64)
@@ -183,7 +193,8 @@ internal class EncoderDecoderTransformer : torch.nn.Module<torch.Tensor, torch.T
         var decoderEmbedding = _decoderPositionalEmbedding.forward(decoderPositions) +
                                _decoderTokenEmbedding.forward(decoderInput);
         var decoderOutput = _decoder.forward(decoderEmbedding, encoderOutput, tgtPaddingMask, srcPaddingMask);
-
+        decoderOutput = _decoderFinalNorm.forward(decoderOutput);
+        
         return _linear.forward(decoderOutput);
     }
 }
@@ -261,18 +272,18 @@ internal class Block : torch.nn.Module<torch.Tensor, torch.Tensor, torch.Tensor,
     public override torch.Tensor forward(torch.Tensor tgt, torch.Tensor? src, torch.Tensor? selfAttentionMask,
         torch.Tensor? crossAttentionMask, bool isCausalMasked)
     {
-        tgt = _multiHeadSelfAttentionLayerNorm.forward(tgt +
-                                                       _multiHeadSelfAttention.forward(tgt, tgt, tgt, selfAttentionMask,
-                                                           isCausalMasked));
+        var normTgt = _multiHeadSelfAttentionLayerNorm.forward(tgt);
+        tgt = tgt + _multiHeadSelfAttention.forward(normTgt, normTgt, normTgt, selfAttentionMask, isCausalMasked);
 
         if (src is not null)
         {
-            tgt = _multiHeadCrossAttentionLayerNorm.forward(tgt +
-                                                            _multiHeadCrossAttention.forward(tgt, src, src,
-                                                                crossAttentionMask, false));
+            var normCrossTgt = _multiHeadCrossAttentionLayerNorm.forward(tgt);
+            tgt = tgt + _multiHeadCrossAttention.forward(normCrossTgt, src, src,
+                crossAttentionMask, false);
         }
 
-        return _mlpLayerNorm.forward(tgt + _mlp.forward(tgt));
+        var normMlpTgt = _mlpLayerNorm.forward(tgt);
+        return tgt + _mlp.forward(normMlpTgt);
     }
 }
 

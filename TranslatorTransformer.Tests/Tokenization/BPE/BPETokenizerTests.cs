@@ -21,7 +21,7 @@ public class BPETokenizerTests
     [InlineData(LongSequenceOfChars, int.MaxValue)]
     public void Train_AlwaysIncludesBasicTokens(string content, int vocabSize)
     {
-         _tokenizer.Train(content, vocabSize);
+         _tokenizer.Train(content, vocabSize, false);
 
          _tokenizer.VocabSize.Should().BeGreaterThanOrEqualTo(byte.MaxValue);
     }
@@ -35,7 +35,7 @@ public class BPETokenizerTests
     [InlineData(LongSequenceOfChars, int.MaxValue)]
     public void Train_AlwaysIncludesSpecialTokens(string content, int vocabSize)
     {
-        _tokenizer.Train(content, vocabSize);
+        _tokenizer.Train(content, vocabSize, false);
 
         foreach (var specialToken in ITokenizer.SpecialTokens.All)
         {
@@ -50,7 +50,7 @@ public class BPETokenizerTests
     {
         var vocabSize = byte.MaxValue + ITokenizer.SpecialTokens.All.Length + 1;
         
-        _tokenizer.Train(LongSequenceOfChars, vocabSize);
+        _tokenizer.Train(LongSequenceOfChars, vocabSize, false);
         
         _tokenizer.VocabSize.Should().BeGreaterThan(byte.MaxValue + ITokenizer.SpecialTokens.All.Length);
     }
@@ -61,7 +61,7 @@ public class BPETokenizerTests
     [InlineData(ITokenizer.SpecialTokens.StartOfTheSequence + "hello, hello, hello???" + ITokenizer.SpecialTokens.EndOfTheSequence, "hello")]
     public void Encode_ShouldEncodeMergedTokensCorrectly(string content, string contentToEncode)
     {
-        _tokenizer.Train(content, int.MaxValue);
+        _tokenizer.Train(content, int.MaxValue, false);
         
         var result = _tokenizer.Encode(contentToEncode);
 
@@ -77,7 +77,7 @@ public class BPETokenizerTests
     
     public void Encode_ShouldEncodeIndividualBytesTokensCorrectly(string contentToEncode)
     {
-        _tokenizer.Train(string.Empty, 0);
+        _tokenizer.Train(string.Empty, 0, false);
         
         var result = _tokenizer.Encode(contentToEncode);
 
@@ -88,7 +88,7 @@ public class BPETokenizerTests
     [MemberData(nameof(GetEncodedSpecialTokens))]
     public void Encode_ShouldEncodeSpecialTokensCorrectly(string contentToEncode, int specialTokenId)
     {
-        _tokenizer.Train(string.Empty, 0);
+        _tokenizer.Train(string.Empty, 0, false);
         
         var result = _tokenizer.Encode(contentToEncode);
 
@@ -117,7 +117,7 @@ public class BPETokenizerTests
     [InlineData(LongSequenceOfChars, int.MaxValue, "ANOTHER NEW TEXT IN ENGLISH")]
     public void Decode_ShouldCorrectlyDecodeTheSameText(string trainingContent, int vocabSize, string textToEncode)
     {
-        _tokenizer.Train(trainingContent, vocabSize);
+        _tokenizer.Train(trainingContent, vocabSize, false);
         var encodedText = _tokenizer.Encode(textToEncode);
         
         var result = _tokenizer.Decode(encodedText);
@@ -133,7 +133,7 @@ public class BPETokenizerTests
     
     public void Decode_ShouldDecodeIndividualBytesTokensCorrectly(string contentToDecode)
     {
-        _tokenizer.Train(string.Empty, 0);
+        _tokenizer.Train(string.Empty, 0, false);
         var encodedText = _tokenizer.Encode(contentToDecode);
         
         var result = _tokenizer.Decode(encodedText);
@@ -147,7 +147,7 @@ public class BPETokenizerTests
     [InlineData(ITokenizer.SpecialTokens.StartOfTheSequence + "hello, hello, hello???" + ITokenizer.SpecialTokens.EndOfTheSequence, "hello")]
     public void Decode_ShouldDecodeMergedTokensCorrectly(string content, string contentToDecode)
     {
-        _tokenizer.Train(content, int.MaxValue);
+        _tokenizer.Train(content, int.MaxValue, false);
         var encodedText = _tokenizer.Encode(contentToDecode);
         
         var result = _tokenizer.Decode(encodedText);
@@ -159,7 +159,7 @@ public class BPETokenizerTests
     [MemberData(nameof(GetDecodedSpecialTokens))]
     public void Decode_ShouldDecodeSpecialTokensCorrectly(string contentToDecode, string specialToken)
     {
-        _tokenizer.Train(string.Empty, 0);
+        _tokenizer.Train(string.Empty, 0, false);
         var encodedText = _tokenizer.Encode(contentToDecode);
         
         var result = _tokenizer.Decode(encodedText);
@@ -183,7 +183,7 @@ public class BPETokenizerTests
         const string middleOfTheSentence = "Hello,{0} my name is Vlad.{0}";
 
         var tokenizer = new BPETokenizer();
-        tokenizer.Train(string.Empty, 0);
+        tokenizer.Train(string.Empty, 0, false);
         
         foreach (var specialToken in ITokenizer.SpecialTokens.All)
         {

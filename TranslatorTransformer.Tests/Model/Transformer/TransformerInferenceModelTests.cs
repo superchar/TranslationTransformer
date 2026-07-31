@@ -25,9 +25,9 @@ public class TransformerInferenceModelTests
     [MemberData(nameof(GetTrainingDocuments))]
     public void Train_NeverOutputsSpecialTokens(string sourceText, string targetText)
     {
-        _tokenizer.Train(sourceText + targetText, VocabSize);
+        _tokenizer.Train(sourceText + targetText, VocabSize, false);
 
-        _model.Train([(sourceText, targetText)], NumberOfIterations);
+        _model.Train([(sourceText, targetText)], NumberOfIterations, false);
 
         var modelOutputTokens = _model.PerformInference(sourceText, string.Empty).ToList();
         var resultText = _tokenizer.Decode(modelOutputTokens);
@@ -41,9 +41,9 @@ public class TransformerInferenceModelTests
         const int numberOfIterations = 50;
         var batch = GetDocumentsBatch().ToList();
         var aggregatedContent = batch.Aggregate(string.Empty, (acc, item) => acc + item.SourceText + item.TargetText);
-        _tokenizer.Train(aggregatedContent, VocabSize);
+        _tokenizer.Train(aggregatedContent, VocabSize, false);
 
-        _model.Train(batch, numberOfIterations);
+        _model.Train(batch, numberOfIterations, false);
 
         foreach (var (sourceText, targetText) in batch)
         {
@@ -58,9 +58,9 @@ public class TransformerInferenceModelTests
     [MemberData(nameof(GetTrainingDocuments))]
     public void Train_OvertrainingOnOneBatch_PredictsTranslationCorrectly(string sourceText, string targetText)
     {
-        _tokenizer.Train(sourceText + targetText, VocabSize);
-
-        _model.Train([(sourceText, targetText)], NumberOfIterations);
+        _tokenizer.Train(sourceText + targetText, VocabSize, false);
+        
+        _model.Train([(sourceText, targetText)], NumberOfIterations, false);
 
         var modelOutputTokens = _model.PerformInference(sourceText, string.Empty).ToList();
         var resultText = _tokenizer.Decode(modelOutputTokens);
