@@ -10,6 +10,9 @@
 	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=686ed492_002D6209_002D440c_002Da02c_002D2bfff3bc6dae/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" Name="All tests from &amp;lt;TranslatorTransformer.Tests&amp;gt;" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;&#xD;
   &lt;Project Location="C:\Users\Dell\RiderProjects\TranslatorTransormer\TranslationTransformer\TranslatorTransformer.Tests" Presentation="&amp;lt;TranslatorTransformer.Tests&amp;gt;" /&gt;&#xD;
 &lt;/SessionState&gt;</s:String>
+	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=90e269f5_002D2b0d_002D4de7_002D90c6_002Df085766ab3b6/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="All tests from Solution" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;&#xD;
+  &lt;Solution /&gt;&#xD;
+&lt;/SessionState&gt;</s:String>
 	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=b9b49f93_002Df940_002D4218_002Dae89_002Dc3f71e1284a4/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="Decode_ShouldCorrectlyDecodeTheSameText" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;&#xD;
   &lt;TestAncestor&gt;&#xD;
     &lt;TestId&gt;xUnit::E8D550BE-8C9D-4053-BF81-22ACEFB8CF5F::net10.0::TranslatorTransformer.Tests.Tokenization.BPE.BPETokenizerTests&lt;/TestId&gt;&#xD;

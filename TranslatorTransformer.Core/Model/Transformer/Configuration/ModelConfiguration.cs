@@ -1,4 +1,4 @@
-﻿namespace TranslatorTransformer.Core.Model.Transformer;
+﻿namespace TranslatorTransformer.Core.Model.Transformer.Configuration;
 
 public static class ModelConfiguration
 {
@@ -8,10 +8,9 @@ public static class ModelConfiguration
 
     public const int NumBlocks = 8;
 
-    public const int MLPScalingFactor = 4;
+    public const int MLPScalingFactor = 4 * HiddenSize;
 
     public const int MaxContextSize = 1024;
-    
+
     public static int HeadSize => HiddenSize / NumHeads;
-    
 }

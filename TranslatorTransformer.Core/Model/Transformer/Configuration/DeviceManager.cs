@@ -1,6 +1,6 @@
-﻿using TorchSharp;
+﻿namespace TranslatorTransformer.Core.Model.Transformer.Configuration;
 
-namespace TranslatorTransformer.Core.Model.Transformer;
+using TorchSharp;
 
 public static class DeviceManager
 {

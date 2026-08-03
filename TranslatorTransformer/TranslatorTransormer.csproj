@@ -32,9 +32,6 @@
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
       <None Remove="Cache\TransformerWeightsCache.dat" />
-      <Content Include="Cache\TransformerWeightsCache.dat">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </Content>
     </ItemGroup>
     
 

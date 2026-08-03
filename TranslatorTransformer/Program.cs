@@ -1,32 +1,66 @@
-﻿// See https://aka.ms/new-console-template for more information
-
+﻿using System.Text;
 using TranslatorTransformer.Core.Model.Transformer;
 using TranslatorTransformer.Core.Tokenization;
 using TranslatorTransformer.Core.Tokenization.BPE;
-const int numberOfIterations = 100_000;
 
-var engText = File.ReadAllText("Translations/EN.txt");
-var rusText = File.ReadAllText("Translations/RU.txt");
-Console.OutputEncoding = System.Text.Encoding.UTF8;
-var tokenizer = new BPETokenizer();
-tokenizer.Train(engText + rusText, ITokenizer.VocabSize);
-var model = new TransformerInferenceModel(tokenizer);
+Console.OutputEncoding = Encoding.UTF8;
 
-var engLines = engText.Split('\n');
-var rusLines = rusText.Split('\n');
+const int UTF8MaxCharLengthBytes = 4;
 
-model.Train(
-    engLines.Zip(rusLines.Select(l =>
-        ITokenizer.SpecialTokens.StartOfTheSequence + l + ITokenizer.SpecialTokens.EndOfTheSequence)).ToList(),
-    numberOfIterations);
+var model = GetModel();
 
 while (true)
 {
+    
     Console.Write("Enter the text: ");
     var sourceText = Console.ReadLine();
-    var tokens = model.PerformInference(sourceText, "").ToList();
-    
-    Console.WriteLine(tokenizer.Decode(tokens));
+    var tokensBuffer = new List<int>();
 
+    foreach (var token in model.PerformInference(sourceText, string.Empty))
+    {
+        tokensBuffer.Add(token);
+        if (tokensBuffer.Count >= UTF8MaxCharLengthBytes)
+        {
+            tokensBuffer.Clear();
+        }
+    }
+
+    if (tokensBuffer.Count > 0)
+    {
+        Console.Write(model.Tokenizer.Decode(tokensBuffer));
+    }
+    
     Console.WriteLine();
+}
+
+TransformerInferenceModel GetModel()
+{
+    const int numberOfIterations = 100;
+    const char lineSeparator = '\n';
+    const string translationFolder = "Translations";
+
+    var engText = File.ReadAllText($"{translationFolder}{Path.DirectorySeparatorChar}EN.txt");
+    var rusText = File.ReadAllText($"{translationFolder}{Path.DirectorySeparatorChar}/RU.txt");
+    
+    var tokenizer = new BPETokenizer();
+    tokenizer.Train(engText + rusText, ITokenizer.VocabSize);
+    var model = new TransformerInferenceModel(tokenizer);
+
+    var engLines = engText.Split(lineSeparator);
+    var rusLines = rusText.Split(lineSeparator);
+
+    model.Train(
+        engLines.Zip(rusLines.Select(l =>
+        {
+            var stringBuilder = new StringBuilder();
+            stringBuilder.Append(ITokenizer.SpecialTokens.StartOfTheSequence);
+            stringBuilder.Append(l);
+            stringBuilder.Append(ITokenizer.SpecialTokens.EndOfTheSequence);
+            
+            return stringBuilder.ToString();
+        })).ToList(),
+        numberOfIterations);
+
+    return model;
+
 }
