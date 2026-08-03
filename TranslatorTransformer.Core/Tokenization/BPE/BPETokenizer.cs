@@ -40,9 +40,9 @@ public class BPETokenizer : ITokenizer
             return;
         }
 
-        var words = GetWords(content)
+        var words = GetWords(content) 
             .Where(w => w.Type == WordType.Regular)
-            .GroupBy(w => w.Content)
+            .GroupBy(w => w.Content) // words pre-aggregation to improve train performance
             .Select(g => (Word: GetWordBytes(g.Key), Count: g.Count()))
             .ToList();
 

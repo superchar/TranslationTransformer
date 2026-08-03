@@ -35,11 +35,11 @@ internal class MultiHeadedAttention : nn.Module<Tensor, Tensor, Tensor, Tensor, 
         bool selfAttentionMaskEnabled)
     {
         var batchSize = querySrc.shape[0];
-        var query = _queryLinear.forward(querySrc);
+        var query = _queryLinear.forward(querySrc);// batchsize, seq length, hidden size
         var key = _keyLinear.forward(keySrc);
         var value = _valueLinear.forward(valueSrc);
 
-        query = query.view(batchSize, querySrc.shape[1], NumHeads, HeadSize).transpose(1, 2);
+        query = query.view(batchSize, querySrc.shape[1], NumHeads, HeadSize).transpose(1, 2); // batchsize, seq length, hidden size -> batchsize, seq length, num heads, head size -> batch size, num heads, seq length, head size
         key = key.view(batchSize, keySrc.shape[1], NumHeads, HeadSize).transpose(1, 2);
         value = value.view(batchSize, valueSrc.shape[1], NumHeads, HeadSize).transpose(1, 2);
 

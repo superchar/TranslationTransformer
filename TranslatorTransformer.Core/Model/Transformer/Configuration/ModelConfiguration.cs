@@ -8,7 +8,7 @@ public static class ModelConfiguration
 
     public const int NumBlocks = 8;
 
-    public const int MLPScalingFactor = 4 * HiddenSize;
+    public const int MLPHidden = 4 * HiddenSize;
 
     public const int MaxContextSize = 1024;
 

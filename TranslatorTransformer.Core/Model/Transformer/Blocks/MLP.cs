@@ -11,9 +11,9 @@ internal class MLP : nn.Module<Tensor, Tensor>
     public MLP() : base("MLP")
     {
         _mlp = nn.Sequential(
-            nn.Linear(HiddenSize, MLPScalingFactor),
+            nn.Linear(HiddenSize, MLPHidden),
             nn.ReLU(),
-            nn.Linear(MLPScalingFactor, HiddenSize));
+            nn.Linear(MLPHidden, HiddenSize));
 
         RegisterComponents();
     }
