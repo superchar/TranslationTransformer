@@ -7,58 +7,36 @@ namespace TranslatorTransformer.Core.Tokenization.BPE;
 public class BPETokenizer : ITokenizer
 {
     private const string NonImplementedErrorMessage = $"The tokenizer was not trained. Call {nameof(Train)}() first.";
-    private static readonly string CachingFileName =  $"Cache{Path.DirectorySeparatorChar}BPETokenizerCache.json";
+    private static readonly string CachingFileName = $"Cache{Path.DirectorySeparatorChar}BPETokenizerCache.json";
 
-    private static readonly string SpecialTokensPattern = 
+    private static readonly string SpecialTokensPattern =
         string.Join("|", ITokenizer.SpecialTokens.All.Select(Regex.Escape));
-    
+
     private static readonly Regex WordSplittingRegex = new(
         $"{SpecialTokensPattern}|'s|'t|'re|'ve|'m|'ll|'d| ?\\p{{L}}+| ?\\p{{N}}+| ?(?:(?!(?:{SpecialTokensPattern}))[^\\s\\p{{L}}\\p{{N}}])+|\\s+(?!\\S)|\\s+\n",
         RegexOptions.Compiled);
 
     private Dictionary<Bytes, int>? _bytesToTokenMappingTable;
-    private Dictionary<int, Bytes> _tokenToBytesMappingTable;
+    private Dictionary<int, Bytes>? _tokenToBytesMappingTable;
 
     public int VocabSize => _bytesToTokenMappingTable?.Count ?? 0;
-    
+
     public void Train(string content, int vocabSize, bool useCache = true)
     {
         Console.WriteLine($"Training a tokenizer to be {vocabSize} words.");
-        if (useCache)
+        if (TryGetFromCache(useCache))
         {
-            var cachedMergingTable = GetFromCache();
-            if (cachedMergingTable != null)
-            {
-                Console.WriteLine("Used tokenizer cache");
-                _bytesToTokenMappingTable = cachedMergingTable;
-                _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
-                return;
-            }
+            return;
         }
-        
+
         _bytesToTokenMappingTable = new Dictionary<Bytes, int>();
 
-        foreach (var basicByte in Enumerable.Range(byte.MinValue, byte.MaxValue + 1))
+        PopulateBasicTokens();
+        if (vocabSize <= _bytesToTokenMappingTable.Count)
         {
-            var bytes = new Bytes([(byte)basicByte]);
-            _bytesToTokenMappingTable[bytes] = basicByte;
-        }
+            PopulateReverseMappingTable();
+            SetToCache(useCache);
 
-        foreach (var specialToken in ITokenizer.SpecialTokens.All)
-        {
-            var bytes = GetWordBytes(specialToken);
-            var mergedWord = bytes.Aggregate(new Bytes([]), (acc, b) => acc.Merge(b));
-            _bytesToTokenMappingTable[mergedWord] = _bytesToTokenMappingTable.Count;
-        }
-        
-        if (vocabSize <= byte.MaxValue)
-        {
-            _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
-            if (useCache)
-            {
-                SetToCache(_bytesToTokenMappingTable);
-            }
-            
             return;
         }
 
@@ -88,12 +66,8 @@ public class BPETokenizer : ITokenizer
             Console.WriteLine($"{_bytesToTokenMappingTable.Count} tokens created.");
         }
 
-        if (useCache)
-        {
-            SetToCache(_bytesToTokenMappingTable);
-        }
-
-        _tokenToBytesMappingTable = _bytesToTokenMappingTable.ToDictionary(m => m.Value, m => m.Key);
+        PopulateReverseMappingTable();
+        SetToCache(useCache);
     }
 
 
@@ -102,21 +76,13 @@ public class BPETokenizer : ITokenizer
         ThrowIfNotTrained();
 
         var words = GetWordsBytes(content);
-        for (var i = 0; i < words.Count; i++)
-        {
-            if (words[i].Type != WordType.SpecialToken)
-            {
-                continue;
-            }
-            
-            var aggregatedBytes = words[i].Bytes.Aggregate(new Bytes([]), (acc, b) => acc.Merge(b));
-            words[i] = words[i] with { Bytes = [aggregatedBytes] };
-        }
+
+        MergeSpecialTokens();
 
         var regularWords = words
             .Where(w => w.Type == WordType.Regular)
             .ToList();
-        
+
         while (true)
         {
             var leastFrequentPairMappingTable = GetPairFrequency(regularWords);
@@ -131,18 +97,18 @@ public class BPETokenizer : ITokenizer
             Bytes? secondLeastFrequentByte = null;
             foreach (var pair in leastFrequentPairMappingTable.OrderBy(pair => pair.Value))
             {
-                var mergedPair = pair.Key.Item1.Merge(pair.Key.Item2);
-                if (!_bytesToTokenMappingTable.TryGetValue(mergedPair, out var rank) || rank >= minRank)
+                var mergedPair = pair.Key.First.Merge(pair.Key.Second);
+                if (!_bytesToTokenMappingTable!.TryGetValue(mergedPair, out var rank) || rank >= minRank)
                 {
                     continue;
                 }
 
                 minRank = rank;
-                firstLeastFrequentByte = pair.Key.Item1;
-                secondLeastFrequentByte = pair.Key.Item2;
+                firstLeastFrequentByte = pair.Key.First;
+                secondLeastFrequentByte = pair.Key.Second;
             }
 
-            if (minRank == int.MaxValue)
+            if (minRank == int.MaxValue || firstLeastFrequentByte is null || secondLeastFrequentByte is null)
             {
                 break;
             }
@@ -150,17 +116,32 @@ public class BPETokenizer : ITokenizer
             MergeBytes(words, firstLeastFrequentByte, secondLeastFrequentByte);
         }
 
-        return words.SelectMany(word => word.Bytes
-                .Select(wordByte => _bytesToTokenMappingTable[wordByte]))
+        return words
+            .SelectMany(word => word.Bytes
+                .Select(wordByte => _bytesToTokenMappingTable![wordByte]))
             .ToList();
+
+        void MergeSpecialTokens()
+        {
+            for (var i = 0; i < words.Count; i++)
+            {
+                if (words[i].Type != WordType.SpecialToken)
+                {
+                    continue;
+                }
+
+                var aggregatedBytes = words[i].Bytes.Aggregate(new Bytes([]), (acc, b) => acc.Merge(b));
+                words[i] = words[i] with { Bytes = [aggregatedBytes] };
+            }
+        }
     }
 
     public string Decode(List<int> encoded)
     {
         ThrowIfNotTrained();
-        
+
         return Encoding.UTF8.GetString(encoded
-            .SelectMany(token => _tokenToBytesMappingTable[token].Data)
+            .SelectMany(token => _tokenToBytesMappingTable![token].Data)
             .ToArray());
     }
 
@@ -176,14 +157,12 @@ public class BPETokenizer : ITokenizer
             .ToList();
 
     private static List<Word> GetWords(string content)
-    {
-        return WordSplittingRegex
+        => WordSplittingRegex
             .Matches(content)
             .Select(m =>
                 new Word(ITokenizer.SpecialTokens.All.Contains(m.Value) ? WordType.SpecialToken : WordType.Regular,
                     m.Value))
             .ToList();
-    }
 
     private static void MergeBytes(List<Word> words, Bytes first, Bytes second)
     {
@@ -223,7 +202,7 @@ public class BPETokenizer : ITokenizer
         }
     }
 
-    private static Dictionary<(Bytes, Bytes), int> GetPairFrequency(List<Word> words)
+    private static Dictionary<(Bytes First, Bytes Second), int> GetPairFrequency(List<Word> words)
     {
         var frequencyTable = new Dictionary<(Bytes, Bytes), int>();
 
@@ -235,7 +214,8 @@ public class BPETokenizer : ITokenizer
         return frequencyTable;
     }
 
-    private static Dictionary<(Bytes, Bytes), int> GetPairFrequency(List<(List<Bytes> Word, int Count)> words)
+    private static Dictionary<(Bytes First, Bytes Second), int> GetPairFrequency(
+        List<(List<Bytes> Word, int Count)> words)
     {
         var frequencyTable = new Dictionary<(Bytes, Bytes), int>();
 
@@ -251,31 +231,58 @@ public class BPETokenizer : ITokenizer
         return frequencyTable;
     }
 
-    private static Dictionary<Bytes, int>? GetFromCache()
+    private void SetToCache(bool useCache)
     {
-        if (!File.Exists(CachingFileName))
+        if (!useCache)
         {
-            return null;
+            return;
         }
-    
-        var content = File.ReadAllText(CachingFileName);
-        var intermediate = JsonSerializer.Deserialize<Dictionary<string, int>>(content);
 
-        return intermediate?.ToDictionary(
-            kvp => new Bytes(Convert.FromBase64String(kvp.Key)),
-            kvp => kvp.Value
-        );
-    }
-
-    private static void SetToCache(Dictionary<Bytes, int> bytesToTokenMappingTable)
-    {
-        var intermediate = bytesToTokenMappingTable.ToDictionary(
+        var intermediate = _bytesToTokenMappingTable!.ToDictionary(
             kvp => Convert.ToBase64String(kvp.Key.Data.ToArray()),
             kvp => kvp.Value
         );
-    
+
         var json = JsonSerializer.Serialize(intermediate);
         File.WriteAllText(CachingFileName, json);
+    }
+
+    private bool TryGetFromCache(bool useCache)
+    {
+        if (!useCache || !File.Exists(CachingFileName))
+        {
+            return false;
+        }
+
+        var content = File.ReadAllText(CachingFileName);
+        var intermediate = JsonSerializer.Deserialize<Dictionary<string, int>>(content);
+
+        _bytesToTokenMappingTable = intermediate?.ToDictionary(
+            kvp => new Bytes(Convert.FromBase64String(kvp.Key)),
+            kvp => kvp.Value
+        );
+
+        PopulateReverseMappingTable();
+
+        return true;
+    }
+
+    private void PopulateReverseMappingTable() => _tokenToBytesMappingTable = _bytesToTokenMappingTable!.ToDictionary(i => i.Value, i => i.Key);
+
+    private void PopulateBasicTokens()
+    {
+        foreach (var basicByte in Enumerable.Range(byte.MinValue, byte.MaxValue + 1))
+        {
+            var bytes = new Bytes([(byte)basicByte]);
+            _bytesToTokenMappingTable![bytes] = basicByte;
+        }
+
+        foreach (var specialToken in ITokenizer.SpecialTokens.All)
+        {
+            var bytes = GetWordBytes(specialToken);
+            var mergedWord = bytes.Aggregate(new Bytes([]), (acc, b) => acc.Merge(b));
+            _bytesToTokenMappingTable![mergedWord] = _bytesToTokenMappingTable.Count;
+        }
     }
 
     private void ThrowIfNotTrained()
